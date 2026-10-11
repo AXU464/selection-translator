@@ -13,3 +13,6 @@ task.txt
 
 # development-only tooling: test suites, probes and diagnostics stay local
 scripts/
+
+# internal task/feature notes for handing work to another agent — keep local
+TASKS-gpt.md
