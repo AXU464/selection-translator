@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>设置 · 划词翻译</title>
+<link rel="stylesheet" href="settings.css"><script src="themes.js"></script>
+</head>
+<body>
+<header><span class="brand">译</span><div><h1>让阅读，更合你的心意。</h1><p>划词翻译 · 偏好设置</p></div><span class="header-detail">YOUR READING SPACE</span></header>
+<div class="layout">
+  <nav aria-label="设置分类">
+    <button class="nav-item active" data-page="appearance" aria-current="page"><span>◐</span>外观与阅读</button>
+    <button class="nav-item" data-page="service"><span>↗</span>翻译服务</button>
+    <button class="nav-item" data-page="behavior"><span>⌘</span>划词与快捷键</button>
+    <div class="nav-note">少一点打扰，<br>多一点专注。</div>
+  </nav>
+  <main id="content">
+    <section id="appearance" aria-labelledby="appearance-title">
+      <div class="section-heading"><div><span class="eyebrow">APPEARANCE</span><h2 id="appearance-title">选一种阅读心情</h2></div><button id="theme-system" class="system-button" type="button" aria-pressed="true">◐ 跟随系统 <span class="check">✓</span></button></div>
+      <p class="intro">14 种配色，灵感来自你的时间卡片。点选即可预览。</p>
+      <div id="theme-grid" aria-label="主题配色"></div>
+      <div class="reading-preview" id="reading-preview"><span class="preview-label">阅读预览</span><p>让每一段文字，都清晰从容。</p><span class="preview-detail">Knowledge begins with curiosity. &nbsp; E = mc²</span></div>
+      <div class="row"><label for="font-size">阅读字号<small>调整译文与公式的大小</small></label><div class="range-control"><input id="font-size" data-key="ui.font_size" type="range" min="11" max="32" step="1"><output id="font-value" for="font-size">14 px</output></div></div>
+      <label class="row toggle"><span>卡片置顶<small>让译文保持在其他窗口上方</small></span><input data-key="ui.result_on_top" type="checkbox"><span class="switch"></span></label>
+      <label class="row toggle"><span>短译文自动收拢<small>内容较少时自动缩短卡片高度</small></span><input data-key="ui.fit_to_content" type="checkbox"><span class="switch"></span></label>
+      <label class="row toggle"><span>在任务栏中显示卡片<small>也可通过 Alt+Tab 找到翻译窗口</small></span><input data-key="ui.result_in_taskbar" type="checkbox"><span class="switch"></span></label>
+    </section>
+    <section id="service" aria-labelledby="service-title" hidden>
+      <span class="eyebrow">TRANSLATION</span><h2 id="service-title">连接你的翻译服务</h2><p class="intro">调整模型与生成方式，找到准确与速度的平衡。</p>
+      <label class="field" for="api-key">API Key <span class="badge" id="key-state">未配置</span></label>
+      <div class="password-field"><input id="api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="输入 API Key"><button id="toggle-key" type="button" aria-label="显示本次输入的密钥" aria-pressed="false">显示</button></div>
+      <p class="help">已有密钥不会显示；留空会保留原来的密钥。</p>
+      <label class="field" for="api-model">模型名称</label><input id="api-model" data-key="api.model" type="text" spellcheck="false" list="model-options" maxlength="120" placeholder="deepseek-flash"><datalist id="model-options"><option value="deepseek-flash"></datalist>
+      <label class="row toggle"><span>流式显示<small>翻译过程中逐步显示译文</small></span><input data-key="api.stream" type="checkbox"><span class="switch"></span></label>
+      <label class="row toggle"><span>深度思考<small>需要模型支持，生成时间可能更长</small></span><input data-key="api.thinking" type="checkbox"><span class="switch"></span></label>
+      <label class="field" for="instructions">额外翻译要求 <span class="optional">选填</span></label><textarea id="instructions" data-key="api.extra_instructions" rows="3" maxlength="8000" placeholder="例如：使用密码学领域的常用术语，保留英文缩写。"></textarea>
+      <details><summary>高级连接与生成参数</summary><div class="details-body">
+        <label class="field" for="base-url">API 地址</label><input id="base-url" data-key="api.base_url" type="url" spellcheck="false" placeholder="https://api.deepseek.com"><p class="help">翻译请求和密钥会发送至这个服务地址。</p>
+        <div class="field-grid"><label>生成温度<input data-key="api.temperature" type="number" min="0" max="2" step="0.1"></label><label>最大输出 tokens<input data-key="api.max_tokens" type="number" min="256" max="65536" step="1"></label><label>超时（秒）<input data-key="api.timeout_seconds" type="number" min="10" max="300" step="1"></label><label>重试次数<input data-key="api.retries" type="number" min="0" max="3" step="1"></label></div>
+      </div></details>
+    </section>
+    <section id="behavior" aria-labelledby="behavior-title" hidden>
+      <span class="eyebrow">WORKFLOW</span><h2 id="behavior-title">顺手，才是好工具</h2><p class="intro">让划词与翻译融入你的阅读习惯。</p>
+      <label class="row toggle"><span>启用划词翻译<small>选中文字后显示翻译按钮</small></span><input data-key="behavior.detect_selection" type="checkbox"><span class="switch"></span></label>
+      <label class="row toggle"><span>双击选词触发翻译<small>支持双击选中单词后的快捷入口</small></span><input data-key="behavior.double_click_select" type="checkbox"><span class="switch"></span></label>
+      <label class="row toggle"><span>还原剪贴板<small>取词后恢复你此前复制的内容</small></span><input data-key="behavior.restore_clipboard" type="checkbox"><span class="switch"></span></label>
+      <div class="field-grid"><label>按钮自动收起（秒）<input data-key="behavior.auto_dismiss_seconds" type="number" min="0" max="120" step="1"><small>0 表示不自动收起</small></label><label>单次选区字符上限<input data-key="behavior.max_chars" type="number" min="100" max="100000" step="1"></label></div>
+      <div class="subheading">快捷键</div>
+      <label class="row toggle"><span>启用翻译快捷键<small>直接翻译当前选中文字</small></span><input data-key="behavior.hotkey_enabled" type="checkbox"><span class="switch"></span></label>
+      <div class="field-grid"><label>译成中文<input data-key="behavior.hotkey_chinese" type="text" spellcheck="false" placeholder="ctrl+alt+c"></label><label>译成英文<input data-key="behavior.hotkey_english" type="text" spellcheck="false" placeholder="ctrl+alt+e"></label></div>
+      <p class="help">组合 ctrl、alt、shift、win 与一个字母、数字或功能键。</p>
+    </section>
+  </main>
+</div>
+<footer><span id="status" role="status">正在读取设置…</span><button id="cancel" class="secondary" type="button">取消</button><button id="save" class="primary" type="button" disabled>保存设置</button></footer>
+<script src="settings.js"></script>
+</body></html>

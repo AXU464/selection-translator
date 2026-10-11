@@ -1,0 +1,15 @@
+# runtime artefacts
+logs/
+.webview/
+state.json
+__pycache__/
+*.py[cod]
+
+# the real config holds the API key; config.example.json is the template
+config.json
+
+# personal notes / requirement draft — keep local, it may mention keys or machine details
+task.txt
+
+# development-only tooling: test suites, probes and diagnostics stay local
+scripts/

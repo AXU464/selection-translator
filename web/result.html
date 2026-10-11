@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>译文</title>
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<script src="vendor/marked.umd.js"></script>
+<script src="vendor/katex/katex.min.js"></script>
+<link rel="stylesheet" href="result.css">
+<script src="themes.js"></script>
+</head>
+<body>
+<svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M3 12h18"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 7h16l-4-4M20 17H4l4 4"/></symbol>
+  <symbol id="i-retry" viewBox="0 0 24 24"><path d="M20 10a8 8 0 1 0-1 7M20 4v6h-6"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5v16M3 4c4-1 6-1 9 1 3-2 5-2 9-1v15c-4-1-6-1-9 2-3-3-5-3-9-2Z"/></symbol>
+  <symbol id="i-size" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="var(--surface)"/><circle cx="15" cy="17" r="3" fill="var(--surface)"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9ZM14 3v6h6M8 13h8M8 17h5"/></symbol>
+  <symbol id="i-grip" viewBox="0 0 24 24"><path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" stroke-width="3"/></symbol>
+</defs></svg>
+<header>
+  <div class="drag-handle" id="drag-handle" title="按住拖动，移动卡片">
+    <span class="logo" aria-hidden="true">译</span>
+    <span class="title" id="title">划词翻译</span>
+    <span class="chip" id="chip" hidden>→ 中文</span>
+    <svg class="icon grip" aria-hidden="true"><use href="#i-grip"/></svg>
+  </div>
+  <div class="controls" role="toolbar" aria-label="卡片操作">
+    <button class="icon-button" id="btn-copy" title="复制译文 (Markdown)" aria-label="复制译文" disabled><svg class="icon"><use href="#i-copy"/></svg></button>
+    <span class="control-divider"></span>
+    <button class="icon-button" id="btn-shrink" title="缩小卡片" aria-label="缩小卡片"><svg class="icon"><use href="#i-minus"/></svg></button>
+    <button class="icon-button" id="btn-grow" title="放大卡片" aria-label="放大卡片"><svg class="icon"><use href="#i-plus"/></svg></button>
+    <button class="icon-button" id="btn-more" title="更多功能" aria-label="更多功能" aria-haspopup="dialog" aria-controls="tools-panel" aria-expanded="false"><svg class="icon"><use href="#i-more"/></svg></button>
+    <button class="icon-button" id="btn-close" title="收起卡片，保留托盘运行" aria-label="收起卡片"><svg class="icon"><use href="#i-close"/></svg></button>
+  </div>
+</header>
+<div id="progress" aria-hidden="true"></div>
+<main id="reading" tabindex="0" aria-label="翻译内容">
+  <div class="wrap">
+    <div class="error" id="error" role="alert" hidden>
+      <h3 id="error-title">翻译失败</h3><div id="error-body"></div><pre id="error-detail" hidden></pre>
+      <button class="text-button" id="btn-error-retry">重新翻译</button>
+    </div>
+    <div class="empty" id="empty">
+      <h2>读懂每一段，保持专注。</h2>
+      <p>划选文字，选择翻译语言，译文即刻呈现。</p>
+      <div class="shortcuts"><span><kbd id="hk-zh">Ctrl+Alt+C</kbd> 中文</span><span><kbd id="hk-en">Ctrl+Alt+E</kbd> English</span></div>
+      <p class="hint">拖动顶部移动卡片 · 拉伸边缘调整大小</p>
+    </div>
+    <div class="panel" id="original-panel" hidden>
+      <div class="panel-head">
+        <span>原文</span><span id="original-len"></span>
+        <button class="text-button" id="btn-source-format" aria-pressed="false">原始文本</button>
+        <button class="text-button" id="original-head"><svg class="icon"><use href="#i-back"/></svg><span id="original-toggle">返回译文</span></button>
+      </div>
+      <article id="original-doc"></article>
+    </div>
+    <div id="stream-note" class="stream-note" role="status" hidden>正在翻译…</div>
+    <article id="doc" aria-label="译文"></article>
+    <button class="source-note" id="source-note" hidden>公式已尝试重构 · 对照复制原文</button>
+  </div>
+</main>
+<div class="backdrop" id="tools-backdrop" hidden></div>
+<section class="tools-panel" id="tools-panel" role="dialog" aria-modal="true" aria-labelledby="tools-title" hidden>
+  <div class="tools-head"><h2 id="tools-title">更多功能</h2><button class="icon-button" id="btn-dismiss-tools" aria-label="关闭更多功能" title="返回阅读"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <div class="tools-grid">
+    <button class="tool" id="btn-original" aria-pressed="false" disabled><svg class="icon"><use href="#i-book"/></svg><span id="original-label">查看原文</span></button>
+    <button class="tool" id="btn-swap" disabled><svg class="icon"><use href="#i-swap"/></svg>反向翻译</button>
+    <button class="tool" id="btn-retry" disabled><svg class="icon"><use href="#i-retry"/></svg>重新翻译</button>
+    <button class="tool" id="btn-default-size"><svg class="icon"><use href="#i-size"/></svg>默认大小</button>
+  </div>
+  <div class="tools-section">
+    <label class="section-label" for="history">最近翻译</label>
+    <select id="history" title="翻译历史" hidden></select><p class="history-empty" id="history-empty">翻译记录会出现在这里</p>
+  </div>
+  <div class="tools-section tools-grid">
+    <button class="tool" id="btn-config"><svg class="icon"><use href="#i-settings"/></svg>设置</button>
+    <button class="tool" id="btn-logs"><svg class="icon"><use href="#i-file"/></svg>查看日志</button>
+  </div>
+  <footer class="tools-section" aria-label="翻译信息">
+    <span id="meta-model">等待翻译</span><span id="meta-chars"></span><span id="meta-time"></span><span id="meta-usage"></span>
+  </footer>
+</section>
+<div class="toast" id="toast" role="status"></div>
+<div class="resize-edge" data-edge="n" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="s" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="w" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="e" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="nw" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="ne" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="sw" aria-hidden="true"></div>
+<div class="resize-edge" data-edge="se" aria-hidden="true" title="拖动调整卡片大小"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------- state
+  const state = {
+    direction: "zh",
+    original: "",
+    translation: "",
+    streaming: false,
+    showOriginal: false,
+    currentId: null,
+    busy: false,
+    autoFit: false,
+    toolsOpen: false,
+    translationScroll: 0,
+    sourceRaw: false,
+    sourceInfo: {},
+  };
+  const DIRECTION_LABEL = { zh: "→ 中文", en: "→ English" };
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    title: $("title"), chip: $("chip"), empty: $("empty"), doc: $("doc"),
+    error: $("error"), errorTitle: $("error-title"), errorBody: $("error-body"),
+    errorDetail: $("error-detail"), streamNote: $("stream-note"),
+    originalPanel: $("original-panel"), originalDoc: $("original-doc"),
+    originalHead: $("original-head"), originalToggle: $("original-toggle"),
+    originalLen: $("original-len"), history: $("history"),
+    metaModel: $("meta-model"), metaChars: $("meta-chars"),
+    metaUsage: $("meta-usage"), metaTime: $("meta-time"),
+    toast: $("toast"),
+    btnOriginal: $("btn-original"), btnCopy: $("btn-copy"), btnSwap: $("btn-swap"),
+    btnRetry: $("btn-retry"), btnConfig: $("btn-config"), btnLogs: $("btn-logs"),
+    reading: $("reading"), tools: $("tools-panel"), backdrop: $("tools-backdrop"),
+    btnMore: $("btn-more"), btnGrow: $("btn-grow"), btnShrink: $("btn-shrink"),
+  };
+
+  function callApi(method, arg) {
+    if (window.pywebview && window.pywebview.api && typeof window.pywebview.api[method] === "function") {
+      const fn = window.pywebview.api[method];
+      // pywebview forwards whatever is passed, so only pass an argument when we
+      // actually have one (Python-side methods without parameters would break).
+      return arguments.length > 1 ? fn(arg) : fn();
+    }
+    return null;
+  }
+
+  function toast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.add("show");
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => els.toast.classList.remove("show"), 1400);
+  }
+
+  // ------------------------------------------------------- source protection
+  // Math and code are pulled out before Markdown runs so that underscores,
+  // asterisks and backslashes inside them survive untouched.
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // Literal angle brackets in copied documents are text, not HTML elements.
+  marked.use({ renderer: { html: (token) => escapeHtml(token.text) } });
+
+  const MATH_TOKEN_PART = "@@KX";
+  const tokenFor = (index) => MATH_TOKEN_PART + index + "@@";
+
+  const RE_FENCE = /```([^\n`]*)\n?([\s\S]*?)(?:```|$)|~~~([^\n~]*)\n?([\s\S]*?)(?:~~~|$)/g;
+  const RE_INLINE_CODE = /`([^`\n]+)`/g;
+  const RE_DISPLAY_DOLLAR = /\$\$([\s\S]+?)\$\$/g;
+  const RE_DISPLAY_BRACKET = /\\\[([\s\S]+?)\\\]/g;
+  const RE_INLINE_PAREN = /\\\(([\s\S]+?)\\\)/g;
+  const RE_ENV = /\\(begin\{(align\*?|aligned|alignedat|equation\*?|gather\*?|alignat\*?|multline\*?|split|cases|matrix|pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|array|eqnarray\*?)\})([\s\S]*?)\\end\{\2\}/g;
+  const RE_INLINE_DOLLAR = /(^|[^\\\w$])\$(?!\s)((?:\\\$|[^$\n])+?)(?<![\s\\$])\$(?![\w$])/g;
+
+  // ------------------------------------------------------------ bare LaTeX
+  // Models sometimes copy formulas without their delimiters (a source text may
+  // contain "j^\mu = \bar{\psi}\gamma^\mu\psi" as plain text).  Those runs are
+  // detected conservatively and wrapped in $...$ so they still get typeset.
+  const MATH_COMMANDS = new Set((
+    "alpha beta gamma delta epsilon varepsilon zeta eta theta vartheta iota kappa lambda mu nu " +
+    "xi pi rho sigma tau upsilon phi varphi chi psi omega Gamma Delta Theta Lambda Xi Pi Sigma " +
+    "Upsilon Phi Psi Omega nabla partial infty sum prod iint iiint oint lim log ln exp sin cos " +
+    "tan cot sec csc arcsin arccos arctan sinh cosh tanh coth det dim ker deg gcd hom max min sup " +
+    "inf arg Pr sqrt frac dfrac tfrac binom choose left right big Big bigg Bigg middle cdot cdots " +
+    "ldots vdots ddots times div pm mp ast star circ bullet oplus ominus otimes oslash wedge vee " +
+    "cap cup subset supset subseteq supseteq in notin ni forall exists neg land lor implies iff to " +
+    "mapsto rightarrow leftarrow leftrightarrow Rightarrow Leftarrow Leftrightarrow uparrow " +
+    "downarrow le leq ge geq ne neq approx sim simeq equiv propto ll gg prec succ perp parallel " +
+    "angle triangle square hbar ell wp Re Im aleph prime mathbb mathcal mathfrak mathbf mathrm " +
+    "mathit mathsf mathtt mathnormal operatorname overline underline bar hat widehat tilde " +
+    "widetilde vec dot ddot acute grave check breve text textrm textbf textit boldsymbol bm " +
+    "displaystyle textstyle scriptstyle limits nolimits quad qquad hspace vspace nonumber tag " +
+    "label eqref ref pu"
+  ).split(/\s+/));
+  const MATH_WORDS = new Set(("sin cos tan cot sec csc log ln exp lim max min det dim ker deg gcd mod arg sup inf Pr Re Im".split(/\s+/)));
+  const RE_RUN = /[A-Za-z0-9\\{}^_=+*\/<>()[\],.$\u0370-\u03ff\u2070-\u209f\u2102-\u214f\u2190-\u22ff\u{1d400}-\u{1d7ff}²³¹′″-]+(?:[ \t][A-Za-z0-9\\{}^_=+*\/<>()[\],.$\u0370-\u03ff\u2070-\u209f\u2102-\u214f\u2190-\u22ff\u{1d400}-\u{1d7ff}²³¹′″-]+)*/gu;
+  const UNICODE_MATH = /[\u0370-\u03ff\u2070-\u209f\u2102-\u214f\u2190-\u22ff\u{1d400}-\u{1d7ff}²³¹′″]/u;
+
+  function proseWordsIn(span) {
+    const words = [];
+    const re = /([A-Za-z]{3,})/g;
+    let match;
+    while ((match = re.exec(span))) {
+      if (span[match.index - 1] === "\\") continue;      // \psi, \gamma …
+      if (MATH_WORDS.has(match[1])) continue;            // sin, det …
+      words.push({ word: match[1], index: match.index, end: match.index + match[1].length });
+    }
+    return words;
+  }
+
+  function findMathSpan(run) {
+    let start = 0;
+    let end = run.length;
+    const isSpace = (ch) => ch === " " || ch === "\t";
+    while (start < end && isSpace(run[start])) start++;
+    while (end > start && isSpace(run[end - 1])) end--;
+
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const length = end - start;
+      if (length < 3) return null;
+      if (length > 400) return null;
+      const span = run.slice(start, end);
+      if (/:\/\//.test(span)) return null;          // URL
+      if (/^[A-Za-z]:\\/.test(span)) return null;   // Windows path
+      if (span.indexOf("$") >= 0) return null;      // delimiters were handled already
+      const commands = (span.match(/\\[a-zA-Z]+/g) || [])
+        .filter((command) => MATH_COMMANDS.has(command.slice(1)));
+      const prose = proseWordsIn(span);
+      const operator = /[\^_=+*\/<>-]/.test(span);
+      if (!prose.length) {
+        if (UNICODE_MATH.test(span) && /[=+<>≤≥≠∈∉∑∏∫×÷−²³¹₀-₉⁰-⁹]/u.test(span)
+            && /[A-Za-z\u0370-\u03ff\u2102-\u214f\u{1d400}-\u{1d7ff}]/u.test(span)) return { start, end };
+        if (commands.length && operator) return { start, end };
+        if (commands.length === 1 && /^\\[a-zA-Z]+(\{[^{}]*\})*$/.test(span)) return { start, end };
+        if (!commands.length && operator && /=/.test(span) && /[\^_]/.test(span)
+            && /^[A-Za-z0-9\s^_{}()+\-*\/=<>.,]+$/.test(span)) return { start, end };
+        return null;                                // clean, but not a formula
+      }
+      // Prose words are only acceptable *outside* the formula: trim them off the
+      // edges and try again, but never cut into the middle of the run.
+      let trimmed = false;
+      const first = prose[0];
+      if (first.index === 0) {
+        start = first.end;
+        while (start < end && isSpace(run[start])) start++;
+        trimmed = true;
+      }
+      const last = prose[prose.length - 1];
+      if (last.end === end - start) {
+        end = start + last.index;
+        while (end > start && isSpace(run[end - 1])) end--;
+        trimmed = true;
+      }
+      if (!trimmed) return null;
+    }
+    return null;
+  }
+
+  function looksLikeMath(content) {
+    const text = String(content).trim();
+    if (!text) return false;
+    if (/^[\d\s.,:;%°'"+*\/=<>-]+$/.test(text)) return false;   // $5, $1,234.00 …
+    if (!/[a-zA-Z\\^_{}]/.test(text) && !/[\u4e00-\u9fff]/.test(text) && !UNICODE_MATH.test(text)) return false;
+    return true;
+  }
+
+  function protect(src) {
+    const parts = [];
+    let text = String(src ?? "").replace(/\r\n?/g, "\n");
+    const push = (part) => { parts.push(part); return tokenFor(parts.length - 1); };
+
+    text = text.replace(RE_FENCE, (m, lang1, code1, lang2, code2) => {
+      const code = (code1 !== undefined ? code1 : code2) || "";
+      const lang = (lang1 || lang2 || "").trim().split(/\s+/)[0];
+      return push({ type: "code", block: true, lang, code });
+    });
+    text = text.replace(RE_INLINE_CODE, (m, code) => push({ type: "code", block: false, code }));
+    text = text.replace(RE_DISPLAY_DOLLAR, (m, tex) => push({ type: "math", display: true, tex, raw: m }));
+    text = text.replace(RE_DISPLAY_BRACKET, (m, tex) => push({ type: "math", display: true, tex, raw: m }));
+    text = text.replace(RE_ENV, (m) => push({ type: "math", display: true, tex: m, raw: m }));
+    text = text.replace(RE_INLINE_PAREN, (m, tex) => push({ type: "math", display: false, tex, raw: m }));
+    text = text.replace(RE_INLINE_DOLLAR, (m, lead, tex) => {
+      if (!looksLikeMath(tex)) return m;
+      return lead + push({ type: "math", display: false, tex, raw: "$" + tex + "$" });
+    });
+    // Formulas the model left without any delimiter.
+    text = text.replace(RE_RUN, (run) => {
+      const span = findMathSpan(run);
+      if (!span) return run;
+      const tex = run.slice(span.start, span.end).trim();
+      if (!tex) return run;
+      const token = push({ type: "math", display: false, tex, raw: tex });
+      return run.slice(0, span.start) + token + run.slice(span.end);
+    });
+    return { text, parts };
+  }
+
+  function partToHtml(part) {
+    if (part.type === "code") {
+      if (part.block) {
+        if (part.lang === "pdf-math") {
+          return '<figure class="pdf-math"><figcaption>公式原文 · 结构待核对</figcaption>'
+            + '<pre tabindex="0"><code>' + escapeHtml(part.code.replace(/\n$/, "")) + '</code></pre></figure>';
+        }
+        const cls = part.lang ? ' class="language-' + escapeHtml(part.lang) + '"' : "";
+        return '<pre class="code"><code' + cls + ">" + escapeHtml(part.code.replace(/\n$/, "")) + "</code></pre>";
+      }
+      return '<code class="inline">' + escapeHtml(part.code) + "</code>";
+    }
+    try {
+      const formula = katex.renderToString(part.tex, {
+        displayMode: !!part.display,
+        throwOnError: true,
+        errorColor: "#d33",
+        strict: false,
+        trust: false,
+        output: "htmlAndMathml",
+      });
+      return '<span class="math-scroll ' + (part.display ? 'math-block' : 'math-inline')
+        + '" role="group" aria-label="公式">' + formula + '</span>';
+    } catch (err) {
+      return '<code class="math-error" title="公式暂时无法排版，已保留原始内容">' + escapeHtml(part.raw) + "</code>";
+    }
+  }
+
+  function renderInto(el, source) {
+    const { text, parts } = protect(source);
+    let html;
+    try {
+      html = marked.parse(text, { gfm: true, breaks: false });
+    } catch (err) {
+      html = "<pre>" + escapeHtml(text) + "</pre>";
+    }
+    html = html.replace(/@@KX(\d+)@@/g, (m, index) => {
+      const part = parts[Number(index)];
+      return part ? partToHtml(part) : m;
+    });
+    el.innerHTML = html;
+    el.querySelectorAll("table").forEach((table) => {
+      if (table.parentElement && table.parentElement.classList.contains("table-wrap")) return;
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      table.replaceWith(wrap);
+      wrap.appendChild(table);
+    });
+    el.querySelectorAll("a[href]").forEach((a) => {
+      a.target = "_blank";
+      a.rel = "noreferrer noopener";
+    });
+    updateMathOverflow();
+  }
+
+  function updateMathOverflow() {
+    document.querySelectorAll(".math-scroll").forEach((el) => {
+      // KaTeX's positioned scripts can extend by a fractional pixel. Only
+      // actual overflow needs a scrollbar or a keyboard focus stop.
+      const scrollable = el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 2;
+      el.classList.toggle("can-scroll", scrollable);
+      if (scrollable) el.tabIndex = 0;
+      else el.removeAttribute("tabindex");
+      el.setAttribute("aria-label", scrollable ? "公式，可横向滚动" : "公式");
+    });
+  }
+
+  // ------------------------------------------------------- render scheduling
+  let renderQueued = false;
+  function scheduleRender() {
+    if (renderQueued) return;
+    renderQueued = true;
+    const run = () => {
+      renderQueued = false;
+      renderInto(els.doc, state.translation);
+      updateSourceNote();
+      updateMetaCounts();
+      reportPreferredHeight();
+    };
+    setTimeout(run, 90);
+  }
+
+  // Ask Python to shrink the window to the content — only when auto-fit is
+  // enabled (off by default: the card keeps a fixed size and scrolls instead).
+  function reportPreferredHeight() {
+    if (!state.autoFit || state.busy) return;
+    const wrap = document.querySelector(".wrap");
+    const header = document.querySelector("header");
+    if (!wrap || !header || state.toolsOpen) return;
+    const needed = Math.ceil(header.getBoundingClientRect().height
+      + wrap.scrollHeight + 4);
+    if (needed > 60) callApi("fit", String(needed));
+  }
+
+  function updateMetaCounts() {
+    const shown = state.showOriginal ? state.original : state.translation;
+    const count = shown ? shown.replace(/\s+/g, "").length : 0;
+    els.metaChars.textContent = count ? count.toLocaleString() + " 字" : "";
+    els.btnCopy.disabled = !shown;
+  }
+
+  // ---------------------------------------------------------------- views
+  function setBusy(busy) {
+    state.busy = busy;
+    document.body.classList.toggle("busy", busy);
+    for (const button of [els.btnRetry, els.btnSwap]) {
+      if (button) button.disabled = busy || !state.original;
+    }
+    $("btn-error-retry").disabled = busy || !state.original;
+    els.btnOriginal.disabled = !state.original;
+  }
+
+  function clearError() {
+    els.error.hidden = true;
+    els.errorDetail.hidden = true;
+    els.errorDetail.textContent = "";
+    els.errorBody.textContent = "";
+  }
+
+  function setDirection(direction) {
+    state.direction = direction === "en" ? "en" : "zh";
+    els.chip.textContent = DIRECTION_LABEL[state.direction];
+    els.chip.hidden = false;
+    els.title.textContent = "划词翻译";
+  }
+
+  function updateOriginalPanel() {
+    const visible = state.showOriginal && !!state.original;
+    els.originalPanel.hidden = !visible;
+    els.doc.hidden = visible;
+    els.originalLen.textContent = "(" + state.original.replace(/\s+/g, "").length.toLocaleString() + " 字)";
+    els.originalPanel.classList.toggle("collapsed", !visible);
+    els.btnOriginal.setAttribute("aria-pressed", String(visible));
+    $("original-label").textContent = visible ? "返回译文" : "查看原文";
+    els.btnCopy.title = visible ? "复制原始文本" : "复制译文 (Markdown)";
+    els.btnCopy.setAttribute("aria-label", visible ? "复制原文" : "复制译文");
+    $("btn-source-format").textContent = state.sourceRaw ? "排版预览" : "原始文本";
+    $("btn-source-format").setAttribute("aria-pressed", String(state.sourceRaw));
+    els.originalDoc.classList.toggle("source-raw", state.sourceRaw);
+    if (visible) {
+      if (state.sourceRaw) els.originalDoc.textContent = state.original;
+      else renderInto(els.originalDoc, state.original);
+    }
+    updateSourceNote();
+    updateMathOverflow();
+    els.streamNote.hidden = visible || !state.busy || !!state.translation;
+  }
+
+  function updateSourceNote() {
+    const uncertain = !!state.sourceInfo.mathLayoutRisk || !!els.doc.querySelector(".pdf-math, .math-error");
+    $("source-note").hidden = state.showOriginal || state.busy || !state.original || !uncertain;
+    $("source-note").textContent = state.sourceInfo.missingGlyphs
+      ? "部分字符缺失，已尽力重构 · 对照原文"
+      : (state.sourceInfo.mathLayoutRisk ? "公式已尝试重构 · 对照复制原文" : "部分公式需核对 · 查看原文");
+  }
+
+  function setToolsOpen(open, restoreFocus = true) {
+    state.toolsOpen = open;
+    els.tools.hidden = !open;
+    els.backdrop.hidden = !open;
+    els.btnMore.setAttribute("aria-expanded", String(open));
+    els.reading.inert = open;
+    document.querySelector("header").inert = open;
+    if (open) $("btn-dismiss-tools").focus({ preventScroll: true });
+    else if (restoreFocus) els.btnMore.focus({ preventScroll: true });
+  }
+
+  async function controlWindow(action) {
+    if (action === "default") setToolsOpen(false);
+    const buttons = [els.btnGrow, els.btnShrink, $("btn-default-size")];
+    buttons.forEach(button => button.disabled = true);
+    try {
+      const ok = await callApi("window_control", action);
+      if (!ok) toast("窗口操作未完成，请重试");
+    } catch (_) {
+      toast("窗口操作未完成，请重试");
+    } finally {
+      buttons.forEach(button => button.disabled = false);
+    }
+  }
+
+  // ---------------------------------------------------------------- API
+  window.__app = {
+    reset(payload) {
+      const data = payload || {};
+      state.original = String(data.original || "");
+      state.sourceInfo = data.sourceInfo || {};
+      state.sourceRaw = !!state.sourceInfo.pdfLike;
+      state.translation = "";
+      state.streaming = true;
+      state.currentId = data.id != null ? data.id : null;
+      setToolsOpen(false, false);
+      state.translationScroll = 0;
+      els.reading.scrollTop = 0;
+      setDirection(data.direction);
+      setBusy(true);
+      clearError();
+      els.empty.hidden = true;
+      els.streamNote.hidden = false;
+      els.streamNote.textContent = "正在翻译…";
+      state.showOriginal = false;
+      updateOriginalPanel();
+      els.doc.innerHTML = "";
+      els.metaModel.textContent = data.model ? data.model : "—";
+      els.metaUsage.textContent = "";
+      els.metaTime.textContent = "";
+      updateMetaCounts();
+    },
+
+    stream(text) {
+      state.translation = String(text || "");
+      els.streamNote.hidden = state.showOriginal || !!state.translation;
+      scheduleRender();
+    },
+
+    final(text, meta) {
+      state.translation = String(text || "");
+      state.streaming = false;
+      setBusy(false);
+      els.streamNote.hidden = true;
+      scheduleRender();
+      if (meta) {
+        els.metaModel.textContent = meta.model || "—";
+        const usage = [];
+        if (meta.completion_tokens) usage.push("输出 " + meta.completion_tokens.toLocaleString() + " tokens");
+        if (meta.prompt_tokens) usage.push("输入 " + meta.prompt_tokens.toLocaleString());
+        els.metaUsage.textContent = usage.join(" · ");
+        els.metaTime.textContent = meta.elapsed ? meta.elapsed.toFixed(2) + " s" : "";
+      }
+    },
+
+    error(message, detail) {
+      state.streaming = false;
+      setBusy(false);
+      els.streamNote.hidden = true;
+      els.error.hidden = false;
+      els.errorTitle.textContent = message || "翻译失败";
+      els.errorBody.textContent = detail ? "" : "请检查网络连接与 API 配置。";
+      if (detail) {
+        els.errorDetail.hidden = false;
+        els.errorDetail.textContent = detail;
+      }
+      if (!state.translation) els.doc.innerHTML = "";
+      reportPreferredHeight();
+    },
+
+    history(items, currentId) {
+      const list = items || [];
+      state.currentId = currentId != null ? currentId : null;
+      if (!list.length) {
+        els.history.hidden = true;
+        $("history-empty").hidden = false;
+        return;
+      }
+      els.history.hidden = false;
+      $("history-empty").hidden = true;
+      els.history.innerHTML = "";
+      if (!list.some(item => String(item.id) === String(state.currentId))) {
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = "选择历史翻译";
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        els.history.appendChild(placeholder);
+      }
+      for (const item of list) {
+        const option = document.createElement("option");
+        option.value = String(item.id);
+        option.textContent = item.label;
+        if (String(item.id) === String(state.currentId)) option.selected = true;
+        els.history.appendChild(option);
+      }
+    },
+
+    showOriginal(flag) {
+      const show = !!flag && !!state.original;
+      if (show && !state.showOriginal) state.translationScroll = els.reading.scrollTop;
+      state.showOriginal = show;
+      updateOriginalPanel();
+      updateMetaCounts();
+      els.reading.scrollTop = show ? 0 : state.translationScroll;
+      reportPreferredHeight();
+    },
+
+    hotkeys(chinese, english) {
+      if (chinese) $("hk-zh").textContent = chinese;
+      if (english) $("hk-en").textContent = english;
+    },
+
+    fontSize(px) {
+      const size = Number(px);
+      if (size >= 11 && size <= 32) {
+        document.documentElement.style.setProperty("--font-size", size + "px");
+        updateMathOverflow();
+      }
+    },
+
+    enableAutoFit(flag) {
+      state.autoFit = !!flag;
+    },
+
+    focusContent() {
+      els.reading.scrollTop = 0;
+    },
+  };
+
+  // ---------------------------------------------------------------- events
+  new ResizeObserver(updateMathOverflow).observe(els.reading);
+  document.fonts.ready.then(updateMathOverflow);
+  document.fonts.addEventListener("loadingdone", updateMathOverflow);
+  function wire(button, handler) {
+    if (button) button.addEventListener("click", handler);
+  }
+
+  wire(els.btnCopy, () => {
+    const text = state.showOriginal ? state.original : state.translation;
+    if (!text) return;
+    const done = () => toast(state.showOriginal ? "已复制原文" : "已复制译文");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => callApi("action", "copy:" + text));
+    } else {
+      callApi("action", "copy:" + text);
+    }
+  });
+  const toggleOriginal = () => {
+    if (!state.original) return;
+    setToolsOpen(false, false);
+    window.__app.showOriginal(!state.showOriginal);
+    if (state.showOriginal) els.originalHead.focus({ preventScroll: true });
+    else els.reading.focus({ preventScroll: true });
+  };
+  wire(els.btnOriginal, toggleOriginal);
+  wire(els.originalHead, toggleOriginal);
+  wire($("btn-source-format"), () => {
+    state.sourceRaw = !state.sourceRaw;
+    updateOriginalPanel();
+    reportPreferredHeight();
+  });
+  wire($("source-note"), () => {
+    state.sourceRaw = true;
+    window.__app.showOriginal(true);
+    els.originalHead.focus({ preventScroll: true });
+  });
+  function action(name) {
+    setToolsOpen(false);
+    callApi("action", name);
+  }
+  wire(els.btnSwap, () => action("swap"));
+  wire(els.btnRetry, () => action("retry"));
+  wire($("btn-error-retry"), () => action("retry"));
+  wire(els.btnConfig, () => action("config"));
+  wire(els.btnLogs, () => action("logs"));
+  wire(els.btnMore, () => setToolsOpen(!state.toolsOpen));
+  wire($("btn-dismiss-tools"), () => setToolsOpen(false));
+  wire(els.backdrop, () => setToolsOpen(false));
+  wire(els.btnGrow, () => controlWindow("grow"));
+  wire(els.btnShrink, () => controlWindow("shrink"));
+  wire($("btn-default-size"), () => controlWindow("default"));
+  wire($("btn-close"), () => controlWindow("close"));
+  for (const handle of [$("drag-handle"), ...document.querySelectorAll(".resize-edge")]) {
+    handle.addEventListener("mousedown", (ev) => {
+      if (ev.button !== 0) return;
+      ev.preventDefault();
+      Promise.resolve(callApi("begin_drag", handle.dataset.edge || "move"))
+        .catch(() => toast("未能调整窗口，请重试"));
+    });
+  }
+  if (els.history) {
+    els.history.addEventListener("change", () => action("history:" + els.history.value));
+  }
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      if (state.toolsOpen) setToolsOpen(false);
+      else if (state.showOriginal) toggleOriginal();
+      return;
+    }
+    if (state.toolsOpen && ev.key === "Tab") {
+      const focusable = [...els.tools.querySelectorAll("button:not(:disabled), select:not([hidden])")];
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+      else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+    }
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "r") {
+      ev.preventDefault();
+      if (!state.busy && state.original) action("retry");
+    }
+  });
+
+  window.addEventListener("error", (ev) => {
+    callApi("action", "jserror:" + (ev.message || "unknown") + " @" + (ev.lineno || 0));
+  });
+
+  window.addEventListener("pywebviewready", () => {
+    callApi("ready");
+  });
+})();
+</script>
+</body>
+</html>
