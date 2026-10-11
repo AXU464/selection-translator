@@ -240,6 +240,7 @@ class Application:
 
         elif kind == events.JOB_FAILED:
             if self._is_current(data.get("job_id")):
+                self._current_job['failed'] = True
                 message = str(data.get("message") or "翻译失败")
                 detail = str(data.get("detail") or "")
                 log.warning("translation failed; details shown only in the result card")
@@ -320,6 +321,7 @@ class Application:
             if self._current_job:
                 self.start_translation(self._current_job["original"],
                                        self._current_job["direction"], origin="retry",
+                                       previous_translation='' if self._current_job.get('failed') else self._current_job.get('translation', ''),
                                        selection=self._current_job.get("selection"))
         elif action == "swap":
             if self._current_job:
@@ -362,7 +364,8 @@ class Application:
         return bool(self._current_job) and self._current_job.get("id") == job_id
 
     def start_translation(self, text: str, direction: str, origin: str = "popup",
-                          truncated: bool = False, selection: CaptureResult | None = None) -> None:
+                          truncated: bool = False, selection: CaptureResult | None = None,
+                          previous_translation: str = '') -> None:
         text = (text or "").strip()
         if not text:
             return
@@ -403,14 +406,16 @@ class Application:
             return
         self.ui.show_result(activate=True, scroll_top=True)
         log.info("translating %s chars into %s (origin=%s)", len(text), direction, origin)
-        self.executor.submit(self._run_job, job_id, text, direction, cancel)
+        self.executor.submit(self._run_job, job_id, text, direction, cancel, origin == 'retry', previous_translation)
 
-    def _run_job(self, job_id: int, text: str, direction: str, cancel: threading.Event) -> None:
+    def _run_job(self, job_id: int, text: str, direction: str, cancel: threading.Event,
+                 bypass_cache=False, previous_translation='') -> None:
         def on_delta(accumulated: str) -> None:
             self._emit(events.JOB_STREAM, {"job_id": job_id, "text": accumulated})
 
         try:
-            result = self.translator.translate(text, direction, on_delta=on_delta, cancel=cancel)
+            result = self.translator.translate(text, direction, on_delta=on_delta, cancel=cancel,
+                                               bypass_cache=bypass_cache, previous_translation=previous_translation)
         except Exception as exc:  # noqa: BLE001 - reported to the UI
             if not cancel.is_set():
                 self._emit(events.JOB_FAILED, {
@@ -433,16 +438,19 @@ class Application:
             "model": result.model or self.translator.model,
             "prompt_tokens": result.usage.prompt_tokens,
             "completion_tokens": result.usage.completion_tokens,
+            "cached": result.cached,
         })
 
     def _finish_job(self, data: dict) -> None:
         text = str(data.get("text") or "")
         job = self._current_job or {}
+        job['translation'] = text
         meta = {
             "model": data.get("model") or self.translator.model,
             "elapsed": data.get("elapsed") or 0.0,
             "prompt_tokens": data.get("prompt_tokens") or 0,
             "completion_tokens": data.get("completion_tokens") or 0,
+            "cached": bool(data.get('cached')),
         }
         self.ui.set_result_final(text, meta)
 
@@ -488,6 +496,7 @@ class Application:
             "direction": entry["direction"],
             "truncated": entry.get("truncated", False),
             "origin": "history",
+            "translation": entry['translation'],
         }
         self.ui.set_result_title(f"译文 · {DIRECTION_LABELS[entry['direction']]}")
         self.ui.set_result_loading(entry["direction"], entry["original"], entry["id"],

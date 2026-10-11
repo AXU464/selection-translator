@@ -1,5 +1,6 @@
 # runtime artefacts
 logs/
+local-data/
 .webview/
 state.json
 __pycache__/

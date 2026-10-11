@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import copy
+import hashlib
 import logging
 import ssl
 import threading
@@ -14,6 +16,8 @@ from requests.adapters import HTTPAdapter
 
 from .language import LOCAL_MODEL_LABEL, SAME_LANGUAGE_MESSAGE, matches_target_language
 from .document import prepare_document
+from .cache import TranslationCache
+from .config import ROOT, DEFAULTS
 
 log = logging.getLogger(__name__)
 
@@ -118,6 +122,7 @@ class TranslationResult:
     elapsed: float = 0.0
     model: str = ""
     cancelled: bool = False
+    cached: bool = False
 
 
 class ApiError(RuntimeError):
@@ -140,6 +145,7 @@ class Translator:
     def __init__(self, cfg):
         self.cfg = cfg
         self.session = _make_session()
+        self.cache = TranslationCache(getattr(cfg, 'path', ROOT / 'config.json').parent / 'local-data' / 'cache.sqlite3')
 
     # -- configuration --------------------------------------------------
     def _endpoint(self) -> str:
@@ -162,24 +168,25 @@ class Translator:
             "Accept": "application/json",
         }
 
-    def _body(self, text: str, target: str, stream: bool, include_usage: bool = True) -> dict:
+    def _body(self, text: str, target: str, stream: bool, include_usage: bool = True, cfg=None) -> dict:
+        cfg = cfg or self.cfg
         document = prepare_document(text)
-        prompt = build_system_prompt(target, self.cfg.get("api.extra_instructions", ""))
+        prompt = build_system_prompt(target, cfg.get("api.extra_instructions", ""))
         if document.math_layout_risk:
             prompt += ("\n\nThis selection has signs of PDF math layout loss. Reconstruct the original mathematical "
                        "notation using the PDF rules and surrounding context, then translate and typeset it. "
                        "Read adjacent broken lines together before deciding a fragment cannot be recovered.")
         body = {
-            "model": self.model,
+            "model": str(cfg.get("api.model") or "deepseek-flash"),
             "messages": [
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": document.text},
             ],
-            "temperature": float(self.cfg.get("api.temperature", 0.2)),
-            "max_tokens": int(self.cfg.get("api.max_tokens", 16000)),
+            "temperature": float(cfg.get("api.temperature", 0.2)),
+            "max_tokens": int(cfg.get("api.max_tokens", 16000)),
             "stream": bool(stream),
         }
-        if not bool(self.cfg.get("api.thinking", False)):
+        if not bool(cfg.get("api.thinking", False)):
             # DeepSeek-V4 accepts an explicit "no thinking" switch; translation
             # does not need chain-of-thought and this is roughly twice as fast.
             body["thinking"] = {"type": "disabled"}
@@ -238,17 +245,52 @@ class Translator:
         return probe.run(settings)
 
     def translate(self, text: str, target: str, on_delta=None,
-                  cancel: threading.Event | None = None) -> TranslationResult:
+                  cancel: threading.Event | None = None, *, bypass_cache=False,
+                  previous_translation="") -> TranslationResult:
         if cancel is not None and cancel.is_set():
             return TranslationResult(cancelled=True)
         # Keep direct callers (e.g. scripts) behind the same no-network gate.
         if matches_target_language(text, target):
             return TranslationResult(text=SAME_LANGUAGE_MESSAGE, model=LOCAL_MODEL_LABEL)
-        attempts = 1 + max(0, int(self.cfg.get("api.retries", 1)))
+        # Freeze every request input so a settings save mid-stream cannot poison the key.
+        from types import SimpleNamespace
+        values = {f'api.{key}': self.cfg.get(f'api.{key}', default) for key, default in DEFAULTS['api'].items()}
+        frozen = SimpleNamespace(get=lambda key, default=None: values.get(key, default))
+        stream = bool(frozen.get('api.stream', True))
+        body = self._body(text, target, stream, cfg=frozen)
+        base = str(frozen.get('api.base_url') or 'https://api.deepseek.com').strip().rstrip('/')
+        endpoint = base if base.endswith('/chat/completions') else base + '/chat/completions'
+        key_material = {'version': 1, 'source': text, 'target': target, 'endpoint': endpoint, 'body': body,
+                        'credential': hashlib.sha256(str(frozen.get('api.api_key', '')).encode()).hexdigest()}
+        cache_key = hashlib.sha256(json.dumps(key_material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        enabled = bool(self.cfg.get('cache.enabled', True))
+        limit = max(1, min(5000, int(self.cfg.get('cache.max_entries', 300))))
+        cache = getattr(self, 'cache', None)
+        if enabled and cache is not None and not bypass_cache:
+            hit = cache.get(cache_key, limit)
+            if hit is not None:
+                return TranslationResult(text=hit['text'], model=hit['model'], cached=True,
+                                         cancelled=bool(cancel and cancel.is_set()))
+        body = copy.deepcopy(body)
+        if bypass_cache and previous_translation:
+            body['messages'].extend([
+                {'role': 'assistant', 'content': previous_translation},
+                {'role': 'user', 'content': 'Reassess the original source and your preceding translation for accuracy, terminology and mathematical fidelity. Return only an improved full translation in the same target language. Correct actual issues; do not change correct wording or mathematics merely to make it different.'},
+            ])
+        key = str(frozen.get('api.api_key', '') or '').strip()
+        if not key:
+            raise ApiError("尚未配置 API Key，请在「更多 → 设置 → 翻译服务」中填写。")
+        request = {'body': body, 'endpoint': endpoint, 'headers': {'Authorization': 'Bearer ' + key,
+                   'Content-Type': 'application/json', 'Accept': 'application/json'},
+                   'timeout': float(frozen.get('api.timeout_seconds', 120))}
+        attempts = 1 + max(0, int(frozen.get("api.retries", 1)))
         last: ApiError | None = None
         for attempt in range(attempts):
             try:
-                return self._translate_once(text, target, on_delta, cancel)
+                result = self._translate_once(text, target, on_delta, cancel, request=request)
+                if enabled and self.cfg.get('cache.enabled', True) and cache is not None and result.text and not result.cancelled and not (cancel and cancel.is_set()):
+                    cache.put(cache_key, result.text, result.model, limit)
+                return result
             except _Retryable as exc:
                 last = exc
                 if exc.produced or attempt == attempts - 1:
@@ -259,21 +301,24 @@ class Translator:
         raise last
 
     def _translate_once(self, text: str, target: str, on_delta,
-                        cancel: threading.Event | None) -> TranslationResult:
-        stream = bool(self.cfg.get("api.stream", True))
-        timeout = float(self.cfg.get("api.timeout_seconds", 120))
+                        cancel: threading.Event | None, request=None) -> TranslationResult:
+        stream = bool(request['body']['stream']) if request else bool(self.cfg.get("api.stream", True))
+        timeout = request['timeout'] if request else float(self.cfg.get("api.timeout_seconds", 120))
         include_usage = True
 
         for attempt in (0, 1):
-            body = self._body(text, target, stream, include_usage)
+            body = copy.deepcopy(request['body']) if request else self._body(text, target, stream, include_usage)
+            if not include_usage:
+                body.pop('stream_options', None)
             started = time.monotonic()
             try:
                 resp = self.session.post(
-                    self._endpoint(),
-                    headers=self._headers(),
+                    request['endpoint'] if request else self._endpoint(),
+                    headers=request['headers'] if request else self._headers(),
                     json=body,
                     timeout=(15, timeout),
                     stream=stream,
+                    allow_redirects=False,
                 )
             except requests.exceptions.SSLError as exc:
                 raise _Retryable(
@@ -298,7 +343,7 @@ class Translator:
                     result = self._consume_stream(resp, started, on_delta, cancel)
                 else:
                     result = self._consume_json(resp, started)
-            result.model = result.model or self.model
+            result.model = result.model or body['model']
             return result
 
         raise ApiError("请求失败，请检查 API 配置。")

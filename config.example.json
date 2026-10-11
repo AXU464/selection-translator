@@ -1,4 +1,5 @@
 {
+  "cache": {"enabled": true, "max_entries": 300},
   "api": {
     "base_url": "https://api.deepseek.com",
     "api_key": "PUT-YOUR-DEEPSEEK-API-KEY-HERE",

@@ -65,6 +65,7 @@
     </div>
     <div id="stream-note" class="stream-note" role="status" hidden>正在翻译…</div>
     <article id="doc" aria-label="译文"></article>
+    <div id="cache-note" class="stream-note" role="status" hidden>本地缓存 · 未调用 API</div>
     <button class="source-note" id="source-note" hidden>公式已尝试重构 · 对照复制原文</button>
   </div>
 </main>
@@ -505,6 +506,7 @@
       els.metaModel.textContent = data.model ? data.model : "—";
       els.metaUsage.textContent = "";
       els.metaTime.textContent = "";
+      $('cache-note').hidden = true;
       updateMetaCounts();
     },
 
@@ -521,11 +523,12 @@
       els.streamNote.hidden = true;
       scheduleRender();
       if (meta) {
+        $('cache-note').hidden = !meta.cached;
         els.metaModel.textContent = meta.model || "—";
         const usage = [];
         if (meta.completion_tokens) usage.push("输出 " + meta.completion_tokens.toLocaleString() + " tokens");
         if (meta.prompt_tokens) usage.push("输入 " + meta.prompt_tokens.toLocaleString());
-        els.metaUsage.textContent = usage.join(" · ");
+        els.metaUsage.textContent = meta.cached ? '本地缓存 · 本次未调用 API' : usage.join(" · ");
         els.metaTime.textContent = meta.elapsed ? meta.elapsed.toFixed(2) + " s" : "";
       }
     },
