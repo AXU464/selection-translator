@@ -123,6 +123,7 @@ class TranslationResult:
     model: str = ""
     cancelled: bool = False
     cached: bool = False
+    cacheable: bool = True
 
 
 class ApiError(RuntimeError):
@@ -264,7 +265,11 @@ class Translator:
                         'credential': hashlib.sha256(str(frozen.get('api.api_key', '')).encode()).hexdigest()}
         cache_key = hashlib.sha256(json.dumps(key_material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         enabled = bool(self.cfg.get('cache.enabled', True))
-        limit = max(1, min(5000, int(self.cfg.get('cache.max_entries', 300))))
+        try:
+            limit = max(1, min(5000, int(self.cfg.get('cache.max_entries', 300))))
+        except (TypeError, ValueError, OverflowError):
+            enabled, limit = False, 300
+            log.warning('Invalid cache limit; caching disabled for this request')
         cache = getattr(self, 'cache', None)
         if enabled and cache is not None and not bypass_cache:
             hit = cache.get(cache_key, limit)
@@ -288,7 +293,7 @@ class Translator:
         for attempt in range(attempts):
             try:
                 result = self._translate_once(text, target, on_delta, cancel, request=request)
-                if enabled and self.cfg.get('cache.enabled', True) and cache is not None and result.text and not result.cancelled and not (cancel and cancel.is_set()):
+                if enabled and self.cfg.get('cache.enabled', True) and cache is not None and result.cacheable and result.text and not result.cancelled and not (cancel and cancel.is_set()):
                     cache.put(cache_key, result.text, result.model, limit)
                 return result
             except _Retryable as exc:
@@ -353,6 +358,7 @@ class Translator:
         result = TranslationResult()
         chunks: list[str] = []
         produced = False
+        complete = False
         try:
             for raw in resp.iter_lines(decode_unicode=False):
                 if cancel is not None and cancel.is_set():
@@ -364,7 +370,10 @@ class Translator:
                     payload = raw[5:].strip()
                 else:
                     payload = raw.strip()
-                if payload in (b"[DONE]", b""):
+                if payload == b"[DONE]":
+                    complete = True
+                    break
+                if payload == b"":
                     continue
                 try:
                     data = json.loads(payload)
@@ -375,6 +384,11 @@ class Translator:
                     raise ApiError("翻译服务返回错误。", detail=str(data["error"])[:400])
                 choices = data.get("choices") or []
                 if choices:
+                    reason = choices[0].get('finish_reason')
+                    if reason:
+                        complete = True
+                        if reason != 'stop':
+                            result.cacheable = False
                     delta = choices[0].get("delta") or {}
                     piece = delta.get("content")
                     if piece:
@@ -393,6 +407,7 @@ class Translator:
             raise _Retryable("读取响应时网络中断。", produced=produced, detail=str(exc)) from exc
 
         result.text = "".join(chunks).strip()
+        result.cacheable = result.cacheable and complete
         result.elapsed = time.monotonic() - started
         if not result.text and not result.cancelled:
             raise ApiError("模型没有返回内容，请重试。")
@@ -410,6 +425,7 @@ class Translator:
             raise ApiError("服务端没有返回结果。", detail=json.dumps(data)[:400])
         message = choices[0].get("message") or {}
         result = TranslationResult()
+        result.cacheable = choices[0].get('finish_reason') in (None, 'stop')
         result.text = str(message.get("content") or "").strip()
         result.usage.merge(data.get("usage"))
         result.elapsed = time.monotonic() - started
