@@ -4,6 +4,26 @@
   let original = {}, theme = 'system', loaded = false, busy = false, generation = 0;
   let previews = Promise.resolve();
   const api = () => window.pywebview.api;
+  let testing = false, connectionRevision = 0;
+  for (const field of [$('api-key'), document.querySelector('[data-key="api.base_url"]')]) {
+    field.addEventListener('input', () => { ++connectionRevision; $('connection-status').textContent = ''; });
+  }
+  $('test-connection').addEventListener('click', async () => {
+    if (testing || !loaded) return;
+    testing = true; const current = generation, revision = connectionRevision;
+    $('test-connection').disabled = true; $('test-connection').textContent = '测试中…';
+    $('connection-status').textContent = '正在检查当前表单中的连接…';
+    try {
+      const result = await api().test_connection({'api.api_key': $('api-key').value,
+        'api.base_url': document.querySelector('[data-key="api.base_url"]').value});
+      if (current !== generation || revision !== connectionRevision) return;
+      $('connection-status').textContent = result.ok
+        ? `连接正常 · ${result.elapsed} 秒。` + (result.models.length ? `可用模型：${result.models.join('、')}` : '服务未列出可用模型。') + '（模型列表测试，不检查余额。）'
+        : result.error;
+      $('connection-status').classList.toggle('error', !result.ok);
+    } catch (_) { if (current === generation) $('connection-status').textContent = '连接测试未完成，请重试。'; }
+    finally { testing = false; $('test-connection').disabled = false; $('test-connection').textContent = '测试连接'; }
+  });
   function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
   function selectPage(id) {
     document.querySelectorAll('main > section').forEach(el => el.hidden = el.id !== id);
@@ -68,6 +88,7 @@
     clearSecrets,
     async load() {
       const current=++generation; loaded=false; busy=false; $('save').disabled=true;
+      $('connection-status').textContent = '';
       status('正在读取设置…');
       try { await catalog; const data=await api().read(); if(current!==generation) return; fill(data); loaded=true; $('save').disabled=false; selectPage('appearance'); status('外观可即时预览，保存后生效。'); }
       catch (_) { status('无法读取设置，请关闭后重新打开。',true); }

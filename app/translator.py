@@ -188,24 +188,54 @@ class Translator:
         return body
 
     # -- api calls ------------------------------------------------------
-    def list_models(self) -> list[str]:
+    def list_models(self, timeout=30) -> list[str]:
         base = str(self.cfg.get("api.base_url") or "https://api.deepseek.com").strip().rstrip("/")
         if base.endswith("/chat/completions"):
             base = base[: -len("/chat/completions")]
         url = f"{base}/models"
         try:
-            resp = self.session.get(url, headers=self._headers(), timeout=30)
+            resp = self.session.get(url, headers=self._headers(), timeout=timeout,
+                                    allow_redirects=False, stream=True)
         except requests.exceptions.SSLError as exc:
             raise ApiError("TLS 证书校验失败，请检查杀毒软件/代理的 HTTPS 扫描设置。", detail=str(exc)) from exc
+        except requests.Timeout as exc:
+            raise ApiError("连接超时，请检查地址与网络后重试。") from exc
         except requests.RequestException as exc:
-            raise ApiError("无法连接 DeepSeek API，请检查网络。", detail=str(exc)) from exc
-        if resp.status_code != 200:
-            raise self._error_for(resp)
+            raise ApiError("无法连接 API，请检查地址与网络。") from exc
         try:
-            data = resp.json()
-            return [item.get("id", "") for item in data.get("data", []) if item.get("id")]
-        except Exception:
-            return []
+            with resp:
+                if 300 <= resp.status_code < 400:
+                    raise ApiError("API 地址发生重定向，请填写最终 API 地址后重试。")
+                # Bound the response as well as the UI wait; never follow redirects with a key.
+                content = bytearray()
+                for chunk in resp.iter_content(8192):
+                    content.extend(chunk)
+                    if len(content) > 131072:
+                        raise ApiError("模型列表响应过大，请检查 API 地址。")
+                resp._content = bytes(content)
+                if resp.status_code != 200:
+                    raise self._error_for(resp)
+                data = json.loads(content)
+                if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+                    raise ApiError("服务未返回有效的模型列表，请检查 API 地址。")
+                return [str(item["id"])[:120] for item in data["data"]
+                        if isinstance(item, dict) and isinstance(item.get("id"), str)][:100]
+        except requests.exceptions.SSLError as exc:
+            raise ApiError("TLS 证书校验失败，请检查杀毒软件/代理的 HTTPS 扫描设置。") from exc
+        except requests.RequestException as exc:
+            raise ApiError("读取模型列表超时或网络中断，请稍后重试。") from exc
+        except (ValueError, TypeError) as exc:
+            raise ApiError("无法解析模型列表，请检查 API 地址。") from exc
+
+    @staticmethod
+    def connection_probe(cfg, values, probe):
+        """Read only the unsaved form's connection fields; never persist its key."""
+        from .preferences import connection_values
+        try:
+            settings = connection_values(values, cfg)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        return probe.run(settings)
 
     def translate(self, text: str, target: str, on_delta=None,
                   cancel: threading.Event | None = None) -> TranslationResult:
@@ -294,7 +324,7 @@ class Translator:
                 try:
                     data = json.loads(payload)
                 except Exception:
-                    log.debug("unparsable stream line: %r", raw[:120])
+                    log.debug("unparsable stream line skipped")
                     continue
                 if isinstance(data, dict) and data.get("error"):
                     raise ApiError("翻译服务返回错误。", detail=str(data["error"])[:400])
@@ -379,3 +409,41 @@ class Translator:
         if status >= 500:
             return _Retryable(f"翻译服务暂时不可用（{status}）。", produced=False, detail=detail)
         return ApiError(f"请求失败（{status}）。", detail=detail, status=status)
+
+
+class ConnectionProbe:
+    """One daemon request at a time, with a wall-clock bound even during DNS stalls."""
+    def __init__(self, deadline=5.0):
+        self.deadline = deadline
+        self.lock = threading.Lock()
+
+    def run(self, values):
+        if not self.lock.acquire(blocking=False):
+            return {"ok": False, "error": "上一次连接测试仍在结束，请稍后再试。"}
+        done = threading.Event()
+        result = {}
+        started = time.monotonic()
+
+        def worker():
+            from types import SimpleNamespace
+            client = None
+            try:
+                cfg = SimpleNamespace(get=lambda key, default=None: values.get(key, default),
+                                      api_key=values["api.api_key"])
+                client = Translator(cfg)
+                result.update(ok=True, models=client.list_models(timeout=(2, 2)))
+            except ApiError as exc:
+                result.update(ok=False, error=exc.message)
+            except Exception:
+                result.update(ok=False, error="连接测试失败，请检查 API 地址与网络后重试。")
+            finally:
+                if client is not None:
+                    client.session.close()
+                result["elapsed"] = round(time.monotonic() - started, 2)
+                self.lock.release()
+                done.set()
+
+        threading.Thread(target=worker, name="connection-probe", daemon=True).start()
+        if not done.wait(self.deadline):
+            return {"ok": False, "error": "连接测试超时（5 秒），请检查 API 地址与网络。"}
+        return result.copy()

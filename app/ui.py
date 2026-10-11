@@ -15,6 +15,7 @@ from . import config as config_mod
 from . import events, winapi
 from .document import prepare_document
 from . import preferences
+from .translator import ConnectionProbe, Translator
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +93,11 @@ class _SettingsApi:
     def read(self):
         return preferences.snapshot(self._ui.cfg)
 
+    def test_connection(self, values):
+        if not self._ui._settings_open:
+            return {"ok": False, "error": "请先打开设置。"}
+        return Translator.connection_probe(self._ui.cfg, values, self._ui.connection_probe)
+
     def preview(self, values):
         with self._ui._settings_lock:
             if not self._ui._settings_open:
@@ -138,6 +144,7 @@ class UiController:
         self.settings: webview.Window | None = None
         self._settings_open = False
         self._settings_lock = threading.RLock()
+        self.connection_probe = ConnectionProbe()
         self._popup_visible = False
         self._popup_bounds: tuple[int, int, int, int] | None = None
         self._popup_hwnd = 0

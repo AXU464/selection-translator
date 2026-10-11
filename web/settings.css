@@ -61,3 +61,4 @@ footer { display:flex; gap:9px; align-items:center; min-height:69px; padding:14p
 .primary,.secondary { border-radius:8px; padding:8px 17px; font-size:12px; white-space:nowrap; }.primary { border:1px solid var(--accent); background:var(--accent); color:var(--bg); }.secondary { border:1px solid var(--line); background:transparent; }.primary:hover,.secondary:hover { filter:brightness(1.06); }button:disabled { opacity:.5; cursor:wait; }
 @media(max-width:710px) { .layout { grid-template-columns:139px minmax(0,1fr); }main { padding:23px 20px; }.header-detail { display:none; }.theme-name small { display:none; }.system-button { padding:5px 8px; font-size:10px; }.range-control input { width:90px; } }
 @media(prefers-reduced-motion:reduce) { * { transition:none !important; } }
+#connection-status { overflow-wrap:anywhere; }#connection-status.error { color:var(--danger); }

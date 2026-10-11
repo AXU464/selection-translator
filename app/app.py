@@ -242,7 +242,7 @@ class Application:
             if self._is_current(data.get("job_id")):
                 message = str(data.get("message") or "翻译失败")
                 detail = str(data.get("detail") or "")
-                log.warning("translation failed: %s | %s", message, detail)
+                log.warning("translation failed; details shown only in the result card")
                 self.ui.set_result_error(message, detail)
 
         elif kind == events.TOGGLE_ENABLED:
@@ -336,7 +336,7 @@ class Application:
             if not clipboard.write_text(action[5:]):
                 log.warning("could not write to the clipboard")
         elif action.startswith("jserror:"):
-            log.warning("UI javascript error: %s", action[8:])
+            log.warning("UI javascript error reported (content omitted)")
         elif action == "hidden":
             pass
 

@@ -30,6 +30,7 @@
       <label class="field" for="api-key">API Key <span class="badge" id="key-state">未配置</span></label>
       <div class="password-field"><input id="api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="输入 API Key"><button id="toggle-key" type="button" aria-label="显示本次输入的密钥" aria-pressed="false">显示</button></div>
       <p class="help">已有密钥不会显示；留空会保留原来的密钥。</p>
+      <button class="secondary" id="test-connection" type="button">测试连接</button><p id="connection-status" class="help" role="status" aria-live="polite"></p>
       <label class="field" for="api-model">模型名称</label><input id="api-model" data-key="api.model" type="text" spellcheck="false" list="model-options" maxlength="120" placeholder="deepseek-flash"><datalist id="model-options"><option value="deepseek-flash"></datalist>
       <label class="row toggle"><span>流式显示<small>翻译过程中逐步显示译文</small></span><input data-key="api.stream" type="checkbox"><span class="switch"></span></label>
       <label class="row toggle"><span>深度思考<small>需要模型支持，生成时间可能更长</small></span><input data-key="api.thinking" type="checkbox"><span class="switch"></span></label>

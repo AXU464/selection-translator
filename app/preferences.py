@@ -28,6 +28,29 @@ STRINGS = {"ui.theme", "api.model", "api.base_url", "api.extra_instructions",
 KEYS = set(NUMBERS) | BOOLEANS | STRINGS
 
 
+def connection_values(values, cfg):
+    if not isinstance(values, dict) or set(values) - {"api.api_key", "api.base_url"}:
+        raise ValueError("连接参数无效，请重新打开设置。")
+    key = values.get("api.api_key", "")
+    base = values.get("api.base_url", cfg.get("api.base_url", ""))
+    if not isinstance(key, str) or not isinstance(base, str):
+        raise ValueError("请填写有效的 API Key 与地址。")
+    key = key.strip() or str(cfg.get("api.api_key", "")).strip()
+    if not key:
+        raise ValueError("请先填写 API Key。")
+    if any(c.isspace() for c in key):
+        raise ValueError("API Key 不能包含空格或换行。")
+    try:
+        url = urlsplit(base.strip())
+        valid = url.scheme in {"http", "https"} and url.hostname and not (url.username or url.password or url.query or url.fragment)
+        url.port  # validate malformed ports before requesting anything
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ValueError("请填写完整的 HTTP/HTTPS API 地址，不包含用户名、密码或查询参数。")
+    return {"api.api_key": key, "api.base_url": base.strip().rstrip("/")}
+
+
 def snapshot(cfg) -> dict:
     return {"values": {key: cfg.get(key) for key in sorted(KEYS)}, "hasApiKey": bool(cfg.get("api.api_key", ""))}
 
