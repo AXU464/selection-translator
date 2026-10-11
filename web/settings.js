@@ -5,6 +5,19 @@
   let previews = Promise.resolve();
   const api = () => window.pywebview.api;
   let testing = false, connectionRevision = 0;
+  // 数字输入框旁标注可填范围：范围值取自输入框自身的 min/max，避免两处维护。
+  for (const input of document.querySelectorAll('input[type=number][data-key]')) {
+    const { min, max } = input;
+    if (min === '' || max === '') continue;
+    const hint = document.createElement('small');
+    hint.className = 'range-hint';
+    hint.textContent = `可填 ${min}–${max}`;
+    input.insertAdjacentElement('afterend', hint);
+    if (input.id) {
+      hint.id = input.id + '-range';
+      input.setAttribute('aria-describedby', hint.id);
+    }
+  }
   for (const field of [$('api-key'), document.querySelector('[data-key="api.base_url"]')]) {
     field.addEventListener('input', () => { ++connectionRevision; $('connection-status').textContent = ''; });
   }
