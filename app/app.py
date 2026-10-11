@@ -20,11 +20,11 @@ from .server import WebServer
 from .translator import Translator
 from .tray import Tray
 from .ui import UiController
+from .history import HistoryStore
 
 log = logging.getLogger(__name__)
 
 DIRECTION_LABELS = {"zh": "中文", "en": "English"}
-HISTORY_LIMIT = 40
 STREAM_INTERVAL = 0.09
 
 
@@ -45,8 +45,10 @@ class Application:
         self.tray = Tray(cfg, self._emit, self.icon_path)
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="translate")
 
-        self.history: deque[dict] = deque(maxlen=HISTORY_LIMIT)
-        self._history_seq = 0
+        self.history_store = HistoryStore(cfg.path.parent / 'local-data' / 'history.jsonl', cfg.get('history.max_entries', 500))
+        self.ui.history_store = self.history_store
+        self.history: deque[dict] = deque(self.history_store.all(), maxlen=self.history_store.limit)
+        self._history_seq = self.history_store.last_id
         self._job_seq = 0
         self._current_job: dict | None = None
         self._cancel: threading.Event | None = None
@@ -256,12 +258,18 @@ class Application:
             self.ui.show_settings()
 
         elif kind == events.SETTINGS_CHANGED:
+            if 'history.max_entries' in data.get('keys', []) and hasattr(self, 'history_store'):
+                self.history_store.resize(self.cfg.get('history.max_entries', 500))
+                self._sync_history()
             if any(key.startswith("behavior.hotkey_") for key in data.get("keys", [])):
                 self.capture.reapply_hotkeys()
             self.capture.set_enabled(self.enabled_state())
             self.tray.set_enabled(self.enabled_state())
             if not self.enabled_state():
                 self._hide_popup()
+
+        elif kind == events.HISTORY_CHANGED:
+            self._sync_history()
 
         elif kind == events.OPEN_RESULT:
             self.ui.show_result(activate=True)
@@ -330,6 +338,8 @@ class Application:
                                        selection=self._current_job.get("selection"))
         elif action == "config":
             self.ui.show_settings()
+        elif action == 'history-manager':
+            self.ui.show_settings('history-page')
         elif action == "logs":
             self._open_path(config_mod.LOG_DIR)
         elif action.startswith("history:"):
@@ -462,12 +472,22 @@ class Application:
             "truncated": job.get("truncated", False),
             "meta": meta,
             "ts": time.time(),
+            "tags": [],
         }
-        self.history.appendleft(entry)
+        if hasattr(self, 'history_store'):
+            self.history_store.add(entry)
+            self._sync_history()
+        else:
+            self.history.appendleft(entry)
+            self._push_history()
+
+    def _sync_history(self):
+        self.history = deque(self.history_store.all(), maxlen=self.history_store.limit)
         self._push_history()
+        self.ui.refresh_history()
 
     def _push_history(self) -> None:
-        items = [{"id": entry["id"], "label": self._history_label(entry)} for entry in self.history]
+        items = [{"id": entry["id"], "label": self._history_label(entry)} for entry in list(self.history)[:40]]
         current = self._current_job.get("entry") if self._current_job else None
         self.ui.push_history(items, current)
 
@@ -484,7 +504,8 @@ class Application:
             entry_id = int(raw_id)
         except (TypeError, ValueError):
             return
-        entry = next((item for item in self.history if item.get("id") == entry_id), None)
+        records = self.history_store.all() if hasattr(self, 'history_store') else self.history
+        entry = next((item for item in records if item.get("id") == entry_id), None)
         if entry is None:
             return
         if self._cancel is not None:

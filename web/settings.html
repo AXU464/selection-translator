@@ -12,6 +12,7 @@
     <button class="nav-item active" data-page="appearance" aria-current="page"><span>◐</span>外观与阅读</button>
     <button class="nav-item" data-page="service"><span>↗</span>翻译服务</button>
     <button class="nav-item" data-page="behavior"><span>⌘</span>划词与快捷键</button>
+    <button class="nav-item" data-page="history-page"><span>◷</span>历史与导出</button>
     <div class="nav-note">少一点打扰，<br>多一点专注。</div>
   </nav>
   <main id="content">
@@ -53,8 +54,23 @@
       <div class="field-grid"><label>译成中文<input data-key="behavior.hotkey_chinese" type="text" spellcheck="false" placeholder="ctrl+alt+c"></label><label>译成英文<input data-key="behavior.hotkey_english" type="text" spellcheck="false" placeholder="ctrl+alt+e"></label></div>
       <p class="help">组合 ctrl、alt、shift、win 与一个字母、数字或功能键。</p>
     </section>
+    <section id="history-page" aria-labelledby="history-title" hidden>
+      <span class="eyebrow">YOUR READING ARCHIVE</span><h2 id="history-title">读过的，留在这里</h2>
+      <p class="intro">自动保存在本机。搜索原文或译文，用标签整理阅读线索。</p>
+      <div class="history-filters"><input id="history-search" type="text" placeholder="搜索原文或译文" aria-label="搜索历史"><select id="history-tag-filter" aria-label="按标签筛选"><option value="">全部标签</option></select></div>
+      <div class="history-actions"><button class="secondary" id="export-md">导出 Markdown</button><button class="secondary" id="export-tsv">导出两列文本</button><button class="secondary" id="clear-history">清空历史…</button></div>
+      <p class="help">导出当前筛选结果。两列文本以 Tab 分隔，标签附在译文列末尾；导入时选 UTF-8 和 Tab 分隔。</p>
+      <p id="history-status" class="help" role="status"></p><button id="open-exports" class="secondary" hidden>打开导出文件夹</button>
+      <div class="history-layout"><div><div id="history-list" aria-label="历史条目"></div><div class="history-pager"><button class="secondary" id="history-prev">上一页</button><span id="history-count"></span><button class="secondary" id="history-next">下一页</button></div></div>
+        <div id="history-detail" hidden><div class="history-detail-head"><span id="history-date"></span><button class="secondary" id="history-show-card">在卡片查看</button></div>
+          <label class="field" for="history-tags">标签（用逗号分隔）</label><div class="history-filters"><input id="history-tags" type="text" maxlength="500" placeholder="论文, 密码学"><button class="secondary" id="history-save-tags">保存标签</button></div>
+          <h3 class="subheading">原文</h3><pre id="history-source"></pre><h3 class="subheading">译文</h3><pre id="history-translation"></pre>
+        </div>
+      </div>
+      <details><summary>历史保存数量</summary><div class="details-body"><label class="field" for="history-limit">最多保留条数</label><input id="history-limit" data-key="history.max_entries" type="number" min="10" max="5000" step="1"><p class="help">修改后点击底部「保存设置」。超过上限会移除最旧记录。</p></div></details>
+    </section>
   </main>
 </div>
 <footer><span id="status" role="status">正在读取设置…</span><button id="cancel" class="secondary" type="button">取消</button><button id="save" class="primary" type="button" disabled>保存设置</button></footer>
-<script src="settings.js"></script>
+<script src="history.js"></script><script src="settings.js"></script>
 </body></html>

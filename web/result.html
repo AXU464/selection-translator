@@ -81,6 +81,7 @@
   <div class="tools-section">
     <label class="section-label" for="history">最近翻译</label>
     <select id="history" title="翻译历史" hidden></select><p class="history-empty" id="history-empty">翻译记录会出现在这里</p>
+    <button class="text-button" id="btn-history-manager">查看全部 · 搜索、标签与导出</button>
   </div>
   <div class="tools-section tools-grid">
     <button class="tool" id="btn-config"><svg class="icon"><use href="#i-settings"/></svg>设置</button>
@@ -122,6 +123,7 @@
   const DIRECTION_LABEL = { zh: "→ 中文", en: "→ English" };
 
   const $ = (id) => document.getElementById(id);
+  $('btn-history-manager').addEventListener('click', () => callApi('action', 'history-manager'));
   const els = {
     title: $("title"), chip: $("chip"), empty: $("empty"), doc: $("doc"),
     error: $("error"), errorTitle: $("error-title"), errorBody: $("error-body"),
@@ -164,7 +166,12 @@
   }
 
   // Literal angle brackets in copied documents are text, not HTML elements.
-  marked.use({ renderer: { html: (token) => escapeHtml(token.text) } });
+  marked.use({ renderer: {
+    html: (token) => escapeHtml(token.text),
+    // Stored text is untrusted content, not permission to contact external sites.
+    image: (token) => '<span>[图片：' + escapeHtml(token.text || '') + ']</span>',
+    link(token) { return '<span title="' + escapeHtml(token.href || '') + '">' + this.parser.parseInline(token.tokens) + '</span>'; },
+  } });
 
   const MATH_TOKEN_PART = "@@KX";
   const tokenFor = (index) => MATH_TOKEN_PART + index + "@@";

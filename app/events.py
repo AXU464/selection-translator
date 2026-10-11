@@ -18,6 +18,7 @@ RELOAD_CONFIG = "reload_config"
 OPEN_RESULT = "open_result"
 OPEN_SETTINGS = "open_settings"
 SETTINGS_CHANGED = "settings_changed"
+HISTORY_CHANGED = "history_changed"
 CLIPBOARD_TRANSLATE = "clipboard_translate"   # data: direction
 RESULT_ACTION = "result_action"    # data: action
 RESULT_CLOSED = "result_closed"    # result card hidden by the user

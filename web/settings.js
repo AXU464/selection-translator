@@ -29,6 +29,9 @@
     document.querySelectorAll('main > section').forEach(el => el.hidden = el.id !== id);
     document.querySelectorAll('.nav-item').forEach(el => { el.classList.toggle('active', el.dataset.page === id); if (el.dataset.page === id) el.setAttribute('aria-current','page'); else el.removeAttribute('aria-current'); });
     $('content').scrollTop = 0;
+    $('cancel').textContent = id === 'history-page' ? '关闭' : '取消';
+    if (id === 'history-page') status('历史与标签自动保存；数量上限需点击「保存设置」。');
+    if (id === 'history-page' && window.History) window.History.refresh();
   }
   document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => selectPage(el.dataset.page)));
   function appearance() {
@@ -86,11 +89,12 @@
   }
   window.Settings = {
     clearSecrets,
-    async load() {
+    openPage: selectPage,
+    async load(page = 'appearance') {
       const current=++generation; loaded=false; busy=false; $('save').disabled=true;
       $('connection-status').textContent = '';
       status('正在读取设置…');
-      try { await catalog; const data=await api().read(); if(current!==generation) return; fill(data); loaded=true; $('save').disabled=false; selectPage('appearance'); status('外观可即时预览，保存后生效。'); }
+      try { await catalog; const data=await api().read(); if(current!==generation) return; fill(data); loaded=true; $('save').disabled=false; status('外观可即时预览，保存后生效。'); selectPage(page); }
       catch (_) { status('无法读取设置，请关闭后重新打开。',true); }
     }
   };

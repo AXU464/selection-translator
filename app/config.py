@@ -22,6 +22,7 @@ LOG_DIR = ROOT / "logs"
 
 DEFAULTS: dict = {
     "cache": {"enabled": True, "max_entries": 300},
+    "history": {"max_entries": 500},
     "api": {
         "base_url": "https://api.deepseek.com",
         "api_key": "",

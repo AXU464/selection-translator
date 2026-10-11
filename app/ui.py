@@ -7,6 +7,8 @@ import ctypes
 import logging
 import pathlib
 import threading
+import uuid
+from datetime import datetime, timezone
 from ctypes import wintypes
 
 import webview
@@ -98,6 +100,66 @@ class _SettingsApi:
             return {"ok": False, "error": "请先打开设置。"}
         return Translator.connection_probe(self._ui.cfg, values, self._ui.connection_probe)
 
+    def history_list(self, keyword='', tag='', page=0):
+        store = self._ui.history_store
+        if store is None:
+            return {'items': [], 'total': 0, 'tags': [], 'error': ''}
+        rows = store.query(keyword, tag)
+        start = max(0, int(page)) * 30
+        return {'items': [{'id': row['id'], 'original': row['original'][:100],
+                          'translation': row['translation'][:100], 'direction': row['direction'],
+                          'ts': row['ts'], 'tags': row.get('tags', [])} for row in rows[start:start+30]],
+                'total': len(rows), 'tags': sorted({tag for row in store.all() for tag in row.get('tags', [])}),
+                'error': store.error}
+
+    def history_detail(self, entry_id):
+        store = self._ui.history_store
+        return next((row for row in store.all() if row['id'] == int(entry_id)), None) if store else None
+
+    def history_tags(self, entry_id, text):
+        try:
+            ok = self._ui.history_store.set_tags(entry_id, text)
+        except (ValueError, TypeError, AttributeError) as exc:
+            return {'ok': False, 'error': str(exc) if isinstance(exc, ValueError) else '历史暂不可用。'}
+        self._ui.emit(events.HISTORY_CHANGED)
+        return {'ok': ok, 'error': '' if ok else self._ui.history_store.error}
+
+    def history_open(self, entry_id):
+        self._ui.emit(events.RESULT_ACTION, {'action': 'history:' + str(int(entry_id))})
+
+    def history_clear(self):
+        if not self._ui._settings_open or self._ui.history_store is None:
+            return {'ok': False, 'error': '请先打开历史页面。'}
+        if not self._ui.settings.create_confirmation_dialog('清空翻译历史',
+                '清空全部历史（含标签及损坏行）？此操作无法撤销。\n独立的翻译缓存和已导出文件会保留。'):
+            return {'ok': False, 'cancelled': True}
+        ok = self._ui.history_store.clear()
+        if ok:
+            self._ui.emit(events.HISTORY_CHANGED)
+        return {'ok': ok, 'error': '' if ok else self._ui.history_store.error}
+
+    def history_export(self, kind, keyword='', tag=''):
+        store = self._ui.history_store
+        if store is None:
+            return {'ok': False, 'error': '历史暂不可用。'}
+        try:
+            content = store.export(kind, keyword, tag)
+            directory = store.path.parent / 'exports'
+            directory.mkdir(parents=True, exist_ok=True)
+            name = 'history-' + datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8]
+            path = directory / (name + ('.md' if kind == 'markdown' else '.txt'))
+            with path.open('x', encoding='utf-8', newline='') as output:
+                output.write(content)
+            return {'ok': True, 'path': str(path)}
+        except (OSError, ValueError):
+            return {'ok': False, 'error': '导出失败，请检查本地数据目录的写入权限。'}
+
+    def history_export_folder(self):
+        import os
+        store = self._ui.history_store
+        if store and (store.path.parent / 'exports').is_dir():
+            os.startfile(str(store.path.parent / 'exports'))
+
     def preview(self, values):
         with self._ui._settings_lock:
             if not self._ui._settings_open:
@@ -145,6 +207,7 @@ class UiController:
         self._settings_open = False
         self._settings_lock = threading.RLock()
         self.connection_probe = ConnectionProbe()
+        self.history_store = None
         self._popup_visible = False
         self._popup_bounds: tuple[int, int, int, int] | None = None
         self._popup_hwnd = 0
@@ -257,18 +320,24 @@ class UiController:
                 except Exception:
                     log.debug("destroying window failed", exc_info=True)
 
-    def show_settings(self) -> None:
+    def show_settings(self, page='appearance') -> None:
         with self._settings_lock:
             if self.settings is None:
                 return
             if not self._settings_open:
                 self._settings_open = True
                 self.apply_appearance()
-                self._eval(self.settings, "window.Settings && window.Settings.load()")
+                self._eval(self.settings, "window.Settings && window.Settings.load(" + json.dumps(page) + ")")
+            elif page != 'appearance':
+                self._eval(self.settings, "window.Settings && window.Settings.openPage(" + json.dumps(page) + ")")
             self.hide_popup()
             self.settings.show()
             self.settings.restore()
             self._raise_window(self._safe_hwnd(self.settings))
+
+    def refresh_history(self):
+        if self._settings_open:
+            self._eval(self.settings, 'window.History && window.History.refresh()')
 
     def close_settings(self) -> bool:
         with self._settings_lock:

@@ -62,3 +62,15 @@ footer { display:flex; gap:9px; align-items:center; min-height:69px; padding:14p
 @media(max-width:710px) { .layout { grid-template-columns:139px minmax(0,1fr); }main { padding:23px 20px; }.header-detail { display:none; }.theme-name small { display:none; }.system-button { padding:5px 8px; font-size:10px; }.range-control input { width:90px; } }
 @media(prefers-reduced-motion:reduce) { * { transition:none !important; } }
 #connection-status { overflow-wrap:anywhere; }#connection-status.error { color:var(--danger); }
+.history-filters,.history-actions,.history-pager,.history-detail-head { display:flex; align-items:center; gap:8px; }
+.history-filters { margin:12px 0; }.history-filters input { flex:1; }.history-filters select { max-width:40%; min-width:110px; padding:9px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink); }
+.history-actions { flex-wrap:wrap; }.history-actions button { padding:7px 11px; }
+#history-status { overflow-wrap:anywhere; }#clear-history { color:var(--danger); }
+.history-layout { margin:16px 0; }.history-entry { display:block; width:100%; text-align:left; border:1px solid var(--line); background:var(--surface); color:var(--ink); padding:11px 13px; margin:7px 0; border-radius:9px; }
+#history-list { max-height:340px; overflow:auto; padding-right:3px; }
+.history-layout:has(#history-detail:not([hidden])) { display:grid; grid-template-columns:minmax(135px,.8fr) minmax(0,1.2fr); gap:16px; }
+.history-entry span { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.history-entry[aria-pressed=true] { border-color:var(--accent); background:var(--tint); }
+.history-pager { justify-content:space-between; margin:12px 0; font-size:11px; }
+#history-detail { border-left:1px solid var(--line); padding-left:16px; min-width:0; }.history-detail-head { justify-content:space-between; flex-wrap:wrap; color:var(--muted); font-size:11px; }
+#history-detail pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.7; font-family:inherit; background:var(--surface); padding:14px; border:1px solid var(--line); border-radius:8px; max-height:330px; overflow:auto; }
+@media(max-width:710px) { .history-layout:has(#history-detail:not([hidden])) { display:block; }#history-detail { border-left:0; border-top:1px solid var(--line); padding:15px 0 0; margin-top:16px; }#history-list { max-height:200px; } }

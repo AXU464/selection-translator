@@ -11,12 +11,13 @@ from .winapi import MODIFIER_VKS, parse_hotkey
 THEMES = {"system", *json.loads((ROOT / "web" / "themes.json").read_text(encoding="utf-8"))}
 NUMBERS = {
     "cache.max_entries": (10, 5000, int),
+    "history.max_entries": (10, 5000, int),
     "ui.font_size": (11, 32, int), "api.temperature": (0, 2, float),
     "api.max_tokens": (256, 65536, int), "api.timeout_seconds": (10, 300, int),
     "api.retries": (0, 3, int), "behavior.max_chars": (100, 100000, int),
     "behavior.auto_dismiss_seconds": (0, 120, int),
 }
-LABELS = {"cache.max_entries": "缓存条数", "ui.font_size": "阅读字号", "api.temperature": "生成温度", "api.max_tokens": "最大输出 tokens",
+LABELS = {"history.max_entries": "历史条数", "cache.max_entries": "缓存条数", "ui.font_size": "阅读字号", "api.temperature": "生成温度", "api.max_tokens": "最大输出 tokens",
           "api.timeout_seconds": "超时时间", "api.retries": "重试次数", "behavior.max_chars": "选区字符上限",
           "behavior.auto_dismiss_seconds": "按钮自动收起时间"}
 BOOLEANS = {
