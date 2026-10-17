@@ -17,6 +17,7 @@ from requests.adapters import HTTPAdapter
 from .language import LOCAL_MODEL_LABEL, SAME_LANGUAGE_MESSAGE, matches_target_language
 from .document import prepare_document
 from .cache import TranslationCache
+from .chinese import normalize_translation
 from .config import ROOT, DEFAULTS
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,10 @@ def build_system_prompt(target: str, extra: str = "") -> str:
         f"(an excerpt from a document, web page, paper or email) that must be translated "
         f"into {language}.\n\nRules:\n{_RULES}"
     )
+    if target != 'en':
+        prompt += ('\n- Use simplified Chinese characters consistently throughout translated prose, '
+                   'including Chinese inside \\text{...}. Do not mix in traditional Chinese characters. '
+                   'Keep verbatim code, identifiers, paths and URLs unchanged.')
     extra = (extra or "").strip()
     if extra:
         prompt += f"\n\nAdditional instructions from the user:\n{extra}"
@@ -247,7 +252,7 @@ class Translator:
 
     def translate(self, text: str, target: str, on_delta=None,
                   cancel: threading.Event | None = None, *, bypass_cache=False,
-                  previous_translation="") -> TranslationResult:
+                  previous_translation="", retry_reason="") -> TranslationResult:
         if cancel is not None and cancel.is_set():
             return TranslationResult(cancelled=True)
         # Keep direct callers (e.g. scripts) behind the same no-network gate.
@@ -274,7 +279,7 @@ class Translator:
         if enabled and cache is not None and not bypass_cache:
             hit = cache.get(cache_key, limit)
             if hit is not None:
-                return TranslationResult(text=hit['text'], model=hit['model'], cached=True,
+                return TranslationResult(text=normalize_translation(hit['text'], target), model=hit['model'], cached=True,
                                          cancelled=bool(cancel and cancel.is_set()))
         body = copy.deepcopy(body)
         if bypass_cache and previous_translation:
@@ -283,6 +288,8 @@ class Translator:
                 {'role': 'user', 'content': 'Reassess the original source and your preceding translation for accuracy, terminology and mathematical fidelity. Return only an improved full translation in the same target language. Correct actual issues; do not change correct wording or mathematics merely to make it different.'},
             ])
         key = str(frozen.get('api.api_key', '') or '').strip()
+        if bypass_cache and retry_reason.strip():
+            body['messages'].append({'role':'user','content':'Reason for retrying: '+retry_reason.strip()[:1000]+ '\nReturn only the complete corrected translation.'})
         if not key:
             raise ApiError("尚未配置 API Key，请在「更多 → 设置 → 翻译服务」中填写。")
         request = {'body': body, 'endpoint': endpoint, 'headers': {'Authorization': 'Bearer ' + key,
@@ -293,6 +300,7 @@ class Translator:
         for attempt in range(attempts):
             try:
                 result = self._translate_once(text, target, on_delta, cancel, request=request)
+                result.text = normalize_translation(result.text, target)
                 if enabled and self.cfg.get('cache.enabled', True) and cache is not None and result.cacheable and result.text and not result.cancelled and not (cancel and cancel.is_set()):
                     cache.put(cache_key, result.text, result.model, limit)
                 return result

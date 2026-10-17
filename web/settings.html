@@ -13,6 +13,7 @@
     <button class="nav-item" data-page="service"><span>↗</span>翻译服务</button>
     <button class="nav-item" data-page="behavior"><span>⌘</span>划词与快捷键</button>
     <button class="nav-item" data-page="history-page"><span>◷</span>历史与导出</button>
+    <button class="nav-item" data-page="formula-help"><span>ƒ</span>公式与存储</button>
     <div class="nav-note">少一点打扰，<br>多一点专注。</div>
   </nav>
   <main id="content">
@@ -68,6 +69,18 @@
         </div>
       </div>
       <details><summary>历史保存数量</summary><div class="details-body"><label class="field" for="history-limit">最多保留条数</label><input id="history-limit" data-key="history.max_entries" type="number" min="10" max="5000" step="1"><p class="help">修改后点击底部「保存设置」。超过上限会移除最旧记录。</p></div></details>
+    </section>
+    <section id="formula-help" aria-labelledby="formula-help-title" hidden>
+      <span class="eyebrow">FORMULAS</span><h2 id="formula-help-title">公式写法修改</h2>
+      <p>把鼠标放在可修改的变量公式上，会看到轻微高亮和「右键修改公式」提示。右键打开写法列表，点选即可替换这一处。其他位置的相同公式各自独立。</p>
+      <p>列表展示实际排版，当前写法打勾。括号、集合、分式、根号和环境中的变量也可独立调整。变量的函数上标会保持为整体参与重排。求和、积分等算符自身的上下限，以及分式、根号和环境的结构参数保留原样。</p>
+      <h3 class="subheading">自己输入 LaTeX</h3><p>列表最后一项可输入裸公式，例如 <code>g^{m_i}</code>。不要添加 $、$$、\[…\] 或 \(…\)。输入后即时预览，语法错误会显示在输入框旁。应用后跟随原来的行内或行间形态。</p>
+      <p>修改立即更新历史。复制和导出使用当前显示写法。选错了可以再次右键选择，不提供撤销。</p>
+      <h3 class="subheading">键盘操作说明</h3><p>按 Tab 聚焦高亮公式，按 Enter 或 Shift+F10 打开列表。方向键切换候选，Home 和 End 到首尾，Enter 确认，Esc 关闭。手写输入框中的 Enter 保持换行。</p>
+      <h3 class="subheading">写法学习</h3><p>关闭卡片或切换翻译时，每处最终显示的写法记一次保留。被改掉的写法扣分。相同内容的权重更高，相同结构的权重较低，分数按 30 天半衰期衰减。新翻译优先显示高分写法，已修改并保存的历史保持原写法。</p>
+      <button id="clear-formula-learning" class="secondary">清除公式学习</button><p id="formula-learning-status" class="help" role="status"></p>
+      <h3 class="subheading">本地存储占用</h3><p>自动数据总预算为 1GB。超限按日志、缓存、最旧历史、最久未用学习偏好的顺序清理。导出文件单独统计，请自行清理。</p>
+      <p id="storage-usage" class="help" role="status"></p><button id="refresh-storage" class="secondary">刷新占用</button>
     </section>
   </main>
 </div>

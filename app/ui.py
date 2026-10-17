@@ -72,6 +72,21 @@ class _ResultApi:
         self._ui.emit(events.UI_READY, {"which": "result"})
         return True
 
+    def formula_preferences(self):
+        store=self._ui.formula_preferences
+        return store.snapshot() if store else {'content':{},'structure':{},'epoch':0}
+
+    def formula_update(self, payload):
+        if self._ui.history_store is None:return {'ok':True}
+        done=threading.Event();reply={}
+        self._ui.emit(events.FORMULA_UPDATE, {'payload':payload,'done':done,'reply':reply})
+        if not done.wait(4):return {'error':'公式已修改，保存仍在处理中。'}
+        return reply
+
+    def retry(self, reason=''):
+        self._ui.emit(events.RESULT_ACTION, {'action':'retry','reason':str(reason)[:1000]})
+        return True
+
     def begin_drag(self, edge):
         return self._ui.begin_result_drag(str(edge))
 
@@ -94,6 +109,15 @@ class _SettingsApi:
 
     def read(self):
         return preferences.snapshot(self._ui.cfg)
+
+    def formula_clear(self):
+        store=self._ui.formula_preferences
+        ok=bool(store and store.clear())
+        return {'ok':ok,'error':'' if ok else '清除未完成，请检查本地数据目录。'}
+
+    def storage_usage(self):
+        budget=self._ui.storage_budget
+        return budget.status() if budget else {'total':0,'exports':0,'limit':1073741824,'error':''}
 
     def test_connection(self, values):
         if not self._ui._settings_open:
@@ -208,6 +232,8 @@ class UiController:
         self._settings_lock = threading.RLock()
         self.connection_probe = ConnectionProbe()
         self.history_store = None
+        self.formula_preferences = None
+        self.storage_budget = None
         self._popup_visible = False
         self._popup_bounds: tuple[int, int, int, int] | None = None
         self._popup_hwnd = 0
@@ -338,6 +364,9 @@ class UiController:
     def refresh_history(self):
         if self._settings_open:
             self._eval(self.settings, 'window.History && window.History.refresh()')
+
+    def end_formula_observation(self):
+        self._eval(self.result,'window.FormulaEditor && window.FormulaEditor.endObservation()')
 
     def close_settings(self) -> bool:
         with self._settings_lock:

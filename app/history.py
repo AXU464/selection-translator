@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import threading
 
+from .chinese import normalize_translation
+
 log = logging.getLogger(__name__)
 
 
@@ -63,6 +65,7 @@ class HistoryStore:
                                 raise ValueError('bad history row')
                             json.dumps(row, allow_nan=False)
                             row.setdefault('tags', [])
+                            row['translation'] = normalize_translation(row['translation'], row['direction'])
                             records[row['id']] = row
                         except (ValueError, TypeError, UnicodeError):
                             if line not in self.bad_lines:
@@ -109,7 +112,9 @@ class HistoryStore:
                 log.warning('Invalid history record skipped (contents omitted)')
                 return
             self.last_id = max(self.last_id, row['id'])
-            self.records = [copy.deepcopy(row)] + [r for r in self.records if r['id'] != row['id']]
+            row = copy.deepcopy(row)
+            row['translation'] = normalize_translation(row['translation'], row['direction'])
+            self.records = [row] + [r for r in self.records if r['id'] != row['id']]
             self.records = self.records[:self.limit]
             self._persist(self.records)
 
@@ -137,6 +142,28 @@ class HistoryStore:
             # Keep edits visible even when disk is unavailable, just like completed translations.
             self.records = rows
             return self._persist(rows)
+
+    def replace_translation(self, entry_id, translation, units):
+        with self.lock:
+            row=next((r for r in self.records if r['id']==entry_id),None)
+            if row is None: return None
+            row['translation']=translation
+            row.setdefault('meta',{}).update(formula_reviewed=True,formula_units=copy.deepcopy(units))
+            return self._persist(self.records)
+
+    def evict_oldest(self):
+        with self.lock:
+            if self.records:
+                remaining=self.records[:-max(1,len(self.records)//4)]
+                if not self._persist(remaining):return False
+                self.records=remaining
+                return True
+            if self.bad_lines:
+                remaining=self.bad_lines[len(self.bad_lines)//2+1:]
+                if not self._persist([],remaining):return False
+                self.bad_lines=remaining
+                return True
+            return False
 
     def clear(self):
         with self.lock:

@@ -21,6 +21,8 @@ from .translator import Translator
 from .tray import Tray
 from .ui import UiController
 from .history import HistoryStore
+from .formulas import FormulaPreferences
+from .storage import StorageBudget
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +49,10 @@ class Application:
 
         self.history_store = HistoryStore(cfg.path.parent / 'local-data' / 'history.jsonl', cfg.get('history.max_entries', 500))
         self.ui.history_store = self.history_store
+        self.formula_preferences=FormulaPreferences(cfg.path.parent/'local-data'/'formula-preferences.sqlite3')
+        self.ui.formula_preferences=self.formula_preferences
+        self.storage_budget=StorageBudget(cfg.path.parent,self.translator.cache,self.history_store,self.formula_preferences)
+        self.ui.storage_budget=self.storage_budget
         self.history: deque[dict] = deque(self.history_store.all(), maxlen=self.history_store.limit)
         self._history_seq = self.history_store.last_id
         self._job_seq = 0
@@ -62,6 +68,10 @@ class Application:
 
     # ------------------------------------------------------------- lifecycle
     def run(self) -> None:
+        self.storage_budget.enforce(before_browser_start=True)
+        self.history=deque(self.history_store.all(),maxlen=self.history_store.limit)
+        os.environ.setdefault('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS',
+            '--disk-cache-size=16777216 --media-cache-size=16777216 --disable-gpu-shader-disk-cache')
         try:
             autostart.ensure_default(self.cfg)
         except OSError:
@@ -138,6 +148,7 @@ class Application:
     def finalize(self) -> None:
         """Called by main() after the GUI loop returned."""
         try:
+            if hasattr(self,'formula_preferences'):self.formula_preferences.settle()
             self.ui._save_geometry()  # noqa: SLF001 - deliberate
         except Exception:
             log.debug("saving geometry failed", exc_info=True)
@@ -175,6 +186,9 @@ class Application:
         if now - last < 60:
             return last
         self.capture.watchdog()
+        if hasattr(self,'storage_budget'):
+            self.storage_budget.enforce()
+            if len(self.history)!=len(self.history_store.records):self._sync_history()
         log.debug("heartbeat: capture=%s events_queued=%s history=%s",
                   self.capture.stats(), self.queue.qsize(), len(self.history))
         return now
@@ -282,9 +296,21 @@ class Application:
             self.start_translation(text, str(data.get("direction") or "zh"), origin="clipboard")
 
         elif kind == events.RESULT_ACTION:
-            self._result_action(str(data.get("action") or ""))
+            self._result_action(str(data.get("action") or ""), str(data.get('reason') or '')[:1000])
+
+        elif kind == events.FORMULA_UPDATE:
+            try:
+                data['reply'].update(self._formula_update(data['payload']))
+            except Exception:
+                log.warning('Formula edit could not be persisted.')
+                data['reply'].update(error='公式已修改，保存暂未完成。')
+            finally:
+                data['done'].set()
 
         elif kind == events.RESULT_CLOSED:
+            if hasattr(self,'formula_preferences'):
+                self.formula_preferences.settle()
+                self.ui.end_formula_observation()
             selection = (self._current_job or {}).get("selection")
             if selection is not None and not self._quitting and not self.ui.popup_visible():
                 self.capture.restore_popup(selection, self._current_job["id"])
@@ -322,7 +348,7 @@ class Application:
         self.ui.apply_preferences(["ui.fit_to_content"])
         log.info("configuration applied")
 
-    def _result_action(self, action: str) -> None:
+    def _result_action(self, action: str, reason: str='') -> None:
         if not action:
             return
         if action == "retry":
@@ -330,6 +356,7 @@ class Application:
                 self.start_translation(self._current_job["original"],
                                        self._current_job["direction"], origin="retry",
                                        previous_translation='' if self._current_job.get('failed') else self._current_job.get('translation', ''),
+                                       retry_reason=reason,
                                        selection=self._current_job.get("selection"))
         elif action == "swap":
             if self._current_job:
@@ -375,10 +402,11 @@ class Application:
 
     def start_translation(self, text: str, direction: str, origin: str = "popup",
                           truncated: bool = False, selection: CaptureResult | None = None,
-                          previous_translation: str = '') -> None:
+                          previous_translation: str = '', retry_reason: str='') -> None:
         text = (text or "").strip()
         if not text:
             return
+        if hasattr(self,'formula_preferences'):self.formula_preferences.settle()
         direction = "en" if direction == "en" else "zh"
         same_language = matches_target_language(text, direction)
 
@@ -416,16 +444,17 @@ class Application:
             return
         self.ui.show_result(activate=True, scroll_top=True)
         log.info("translating %s chars into %s (origin=%s)", len(text), direction, origin)
-        self.executor.submit(self._run_job, job_id, text, direction, cancel, origin == 'retry', previous_translation)
+        self.executor.submit(self._run_job, job_id, text, direction, cancel, origin == 'retry', previous_translation, retry_reason)
 
     def _run_job(self, job_id: int, text: str, direction: str, cancel: threading.Event,
-                 bypass_cache=False, previous_translation='') -> None:
+                 bypass_cache=False, previous_translation='', retry_reason='') -> None:
+        if hasattr(self,'storage_budget'):self.storage_budget.enforce()
         def on_delta(accumulated: str) -> None:
             self._emit(events.JOB_STREAM, {"job_id": job_id, "text": accumulated})
 
         try:
             result = self.translator.translate(text, direction, on_delta=on_delta, cancel=cancel,
-                                               bypass_cache=bypass_cache, previous_translation=previous_translation)
+                                               bypass_cache=bypass_cache, previous_translation=previous_translation, retry_reason=retry_reason)
         except Exception as exc:  # noqa: BLE001 - reported to the UI
             if not cancel.is_set():
                 self._emit(events.JOB_FAILED, {
@@ -475,7 +504,9 @@ class Application:
             "tags": [],
         }
         if hasattr(self, 'history_store'):
+            if hasattr(self,'storage_budget'):self.storage_budget.enforce()
             self.history_store.add(entry)
+            if hasattr(self,'storage_budget'):self.storage_budget.enforce()
             self._sync_history()
         else:
             self.history.appendleft(entry)
@@ -485,6 +516,26 @@ class Application:
         self.history = deque(self.history_store.all(), maxlen=self.history_store.limit)
         self._push_history()
         self.ui.refresh_history()
+
+    def _formula_update(self, payload):
+        job=self._current_job or {}
+        if (not isinstance(payload,dict) or payload.get('entry')!=job.get('entry')
+                or payload.get('before')!=job.get('translation')):
+            return {'error':'这条翻译已切换，请在当前卡片重新操作。'}
+        text=payload.get('translation');units=payload.get('units')
+        if not isinstance(text,str) or len(text)>2000000 or not isinstance(units,list) or len(units)>2000:
+            return {'error':'公式修改内容无效。'}
+        safe=[]
+        for u in units:
+            if not isinstance(u,dict) or type(u.get('index')) is not int or not isinstance(u.get('template'),str) or len(u['template'])>4000:continue
+            safe.append({k:u[k] for k in ('index','offset','end','partTemplate','template','tex','content','structure','selected','corrected') if k in u})
+        job['translation']=text
+        ok=self.history_store.replace_translation(job['entry'],text,safe)
+        self.formula_preferences.observe(job['entry'],safe,payload.get('epoch'))
+        self._sync_history()
+        if hasattr(self,'storage_budget'):self.storage_budget.enforce()
+        error=self.history_store.error if ok is False else ('这条历史已被移除，当前修改仍可复制。' if ok is None else '')
+        return {'ok':bool(ok),'error':error}
 
     def _push_history(self) -> None:
         items = [{"id": entry["id"], "label": self._history_label(entry)} for entry in list(self.history)[:40]]
@@ -508,6 +559,7 @@ class Application:
         entry = next((item for item in records if item.get("id") == entry_id), None)
         if entry is None:
             return
+        if hasattr(self,'formula_preferences'):self.formula_preferences.settle()
         if self._cancel is not None:
             self._cancel.set()  # the user is looking at history, stop streaming into it
         self._current_job = {

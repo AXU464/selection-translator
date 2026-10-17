@@ -75,3 +75,17 @@ class TranslationCache:
             finally:
                 if db is not None:
                     db.close()
+
+    def evict_oldest(self):
+        with self.lock:
+            db=None
+            try:
+                db=self._open()
+                with db:
+                    count=db.execute('SELECT count(*) FROM translations').fetchone()[0]
+                    db.execute('DELETE FROM translations WHERE key IN (SELECT key FROM translations ORDER BY used LIMIT ?)',(max(1,count//4),))
+                db.execute('VACUUM')
+                return bool(count)
+            except (OSError,sqlite3.Error):return False
+            finally:
+                if db:db.close()

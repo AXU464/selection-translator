@@ -4,6 +4,16 @@
   let original = {}, theme = 'system', loaded = false, busy = false, generation = 0;
   let previews = Promise.resolve();
   const api = () => window.pywebview.api;
+  async function storageUsage(){
+    try{const s=await api().storage_usage();const mb=n=>(n/1048576).toFixed(1)+' MB';$('storage-usage').textContent=`自动数据 ${mb(s.total)} / ${mb(s.limit)}。导出文件 ${mb(s.exports)}，请手动清理。`+(s.error||'');}
+    catch(_){$('storage-usage').textContent='占用统计暂时不可用。';}
+  }
+  $('refresh-storage').addEventListener('click',storageUsage);
+  $('clear-formula-learning').addEventListener('click',async()=>{
+    const button=$('clear-formula-learning');button.disabled=true;
+    try{const r=await api().formula_clear();$('formula-learning-status').textContent=r.ok?'公式学习已清除。当前历史写法保留。':r.error;await storageUsage();}
+    catch(_){$('formula-learning-status').textContent='清除未完成，请重试。';}finally{button.disabled=false;}
+  });
   let testing = false, connectionRevision = 0;
   // 数字输入框旁标注可填范围：范围值取自输入框自身的 min/max，避免两处维护。
   for (const input of document.querySelectorAll('input[type=number][data-key]')) {
@@ -39,6 +49,7 @@
   });
   function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); }
   function selectPage(id) {
+    if(id==='formula-help')storageUsage();
     document.querySelectorAll('main > section').forEach(el => el.hidden = el.id !== id);
     document.querySelectorAll('.nav-item').forEach(el => { el.classList.toggle('active', el.dataset.page === id); if (el.dataset.page === id) el.setAttribute('aria-current','page'); else el.removeAttribute('aria-current'); });
     $('content').scrollTop = 0;

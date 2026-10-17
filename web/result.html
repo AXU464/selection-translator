@@ -9,6 +9,7 @@
 <script src="vendor/katex/katex.min.js"></script>
 <link rel="stylesheet" href="result.css">
 <script src="themes.js"></script>
+<script src="formula-units.js"></script>
 </head>
 <body>
 <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
@@ -72,6 +73,7 @@
 <div class="backdrop" id="tools-backdrop" hidden></div>
 <section class="tools-panel" id="tools-panel" role="dialog" aria-modal="true" aria-labelledby="tools-title" hidden>
   <div class="tools-head"><h2 id="tools-title">更多功能</h2><button class="icon-button" id="btn-dismiss-tools" aria-label="关闭更多功能" title="返回阅读"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <div class="retry-reasons"><label for="retry-reason">重试原因</label><select id="retry-reason"><option value="">默认重新检查译文</option><option>公式部分未渲染</option><option>公式上下标写法不正确</option><option>术语或句意不准确</option><option>译文不完整</option><option value="custom">自己填写…</option><option value="skip">跳过原因，直接重试</option></select><textarea id="retry-custom" maxlength="1000" placeholder="描述需要改进的地方" hidden></textarea></div>
   <div class="tools-grid">
     <button class="tool" id="btn-original" aria-pressed="false" disabled><svg class="icon"><use href="#i-book"/></svg><span id="original-label">查看原文</span></button>
     <button class="tool" id="btn-swap" disabled><svg class="icon"><use href="#i-swap"/></svg>反向翻译</button>
@@ -101,6 +103,7 @@
 <div class="resize-edge" data-edge="sw" aria-hidden="true"></div>
 <div class="resize-edge" data-edge="se" aria-hidden="true" title="拖动调整卡片大小"></div>
 
+<script src="formula-editor.js"></script>
 <script>
 (function () {
   "use strict";
@@ -119,6 +122,8 @@
     translationScroll: 0,
     sourceRaw: false,
     sourceInfo: {},
+    formulaReviewed: false,
+    formulaUnits: [],
   };
   const DIRECTION_LABEL = { zh: "→ 中文", en: "→ English" };
 
@@ -278,15 +283,23 @@
 
   function protect(src) {
     const parts = [];
-    let text = String(src ?? "").replace(/\r\n?/g, "\n");
-    const push = (part) => { parts.push(part); return tokenFor(parts.length - 1); };
+    const original = String(src ?? "").replace(/\r\n?/g, "\n");
+    let text = original;
+    const occupied=[];
+    const push = (part) => {
+      let start=original.indexOf(part.raw || ''), length=(part.raw || '').length;
+      while(start>=0 && occupied.some(([a,b])=>start<b && start+length>a))start=original.indexOf(part.raw,start+1);
+      part.start=length?start:-1;part.end=start+length;part.index=parts.length;
+      if(start>=0&&length)occupied.push([start,start+length]);
+      parts.push(part);return tokenFor(parts.length-1);
+    };
 
     text = text.replace(RE_FENCE, (m, lang1, code1, lang2, code2) => {
       const code = (code1 !== undefined ? code1 : code2) || "";
       const lang = (lang1 || lang2 || "").trim().split(/\s+/)[0];
-      return push({ type: "code", block: true, lang, code });
+      return push({ type: "code", block: true, lang, code, raw:m });
     });
-    text = text.replace(RE_INLINE_CODE, (m, code) => push({ type: "code", block: false, code }));
+    text = text.replace(RE_INLINE_CODE, (m, code) => push({ type: "code", block: false, code, raw:m }));
     text = text.replace(RE_DISPLAY_DOLLAR, (m, tex) => push({ type: "math", display: true, tex, raw: m }));
     text = text.replace(RE_DISPLAY_BRACKET, (m, tex) => push({ type: "math", display: true, tex, raw: m }));
     text = text.replace(RE_ENV, (m) => push({ type: "math", display: true, tex: m, raw: m }));
@@ -329,14 +342,17 @@
         output: "htmlAndMathml",
       });
       return '<span class="math-scroll ' + (part.display ? 'math-block' : 'math-inline')
-        + '" role="group" aria-label="公式">' + formula + '</span>';
+        + '" data-formula-part="' + part.index + '" role="group" aria-label="公式">' + formula + '</span>';
     } catch (err) {
       return '<code class="math-error" title="公式暂时无法排版，已保留原始内容">' + escapeHtml(part.raw) + "</code>";
     }
   }
 
   function renderInto(el, source) {
-    const { text, parts } = protect(source);
+    let { text, parts } = protect(source);
+    if(el===els.doc&&!state.streaming){
+      text=FormulaUnits.groupFragments(String(source).replace(/\r\n?/g,'\n'),state.original,parts,text)||text;
+    }
     let html;
     try {
       html = marked.parse(text, { gfm: true, breaks: false });
@@ -360,6 +376,11 @@
       a.rel = "noreferrer noopener";
     });
     updateMathOverflow();
+    if(el===els.doc && !state.streaming && state.translation && state.translation!== '选中语言类型与目标一致') {
+      FormulaEditor.attach(el,source,parts,state.currentId,state.formulaReviewed,(value)=>{
+        state.translation=value;state.formulaReviewed=true;updateMetaCounts();
+      },toast,updateMathOverflow,state.formulaUnits);
+    }
   }
 
   function updateMathOverflow() {
@@ -369,7 +390,7 @@
       const scrollable = el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 2;
       el.classList.toggle("can-scroll", scrollable);
       if (scrollable) el.tabIndex = 0;
-      else el.removeAttribute("tabindex");
+      else if(!el.classList.contains('formula-editable')) el.removeAttribute("tabindex");
       el.setAttribute("aria-label", scrollable ? "公式，可横向滚动" : "公式");
     });
   }
@@ -475,6 +496,7 @@
   }
 
   async function controlWindow(action) {
+    if(action==='close')await FormulaEditor.flush();
     if (action === "default") setToolsOpen(false);
     const buttons = [els.btnGrow, els.btnShrink, $("btn-default-size")];
     buttons.forEach(button => button.disabled = true);
@@ -491,11 +513,13 @@
   // ---------------------------------------------------------------- API
   window.__app = {
     reset(payload) {
+      FormulaEditor.reset();
       const data = payload || {};
       state.original = String(data.original || "");
       state.sourceInfo = data.sourceInfo || {};
       state.sourceRaw = !!state.sourceInfo.pdfLike;
       state.translation = "";
+      state.formulaReviewed=false;state.formulaUnits=[];
       state.streaming = true;
       state.currentId = data.id != null ? data.id : null;
       setToolsOpen(false, false);
@@ -530,6 +554,7 @@
       els.streamNote.hidden = true;
       scheduleRender();
       if (meta) {
+        state.formulaReviewed=!!meta.formula_reviewed;state.formulaUnits=meta.formula_units||[];
         $('cache-note').hidden = !meta.cached;
         els.metaModel.textContent = meta.model || "—";
         const usage = [];
@@ -656,9 +681,17 @@
     setToolsOpen(false);
     callApi("action", name);
   }
+  $('retry-reason').addEventListener('change',()=>{$('retry-custom').hidden=$('retry-reason').value!=='custom';});
+  function retry(){
+    const chosen=$('retry-reason').value;
+    const reason=chosen==='custom'?$('retry-custom').value:(chosen==='skip'?'':chosen);
+    setToolsOpen(false);
+    if(reason && window.pywebview?.api?.retry)callApi('retry',reason);
+    else callApi('action','retry');
+  }
   wire(els.btnSwap, () => action("swap"));
-  wire(els.btnRetry, () => action("retry"));
-  wire($("btn-error-retry"), () => action("retry"));
+  wire(els.btnRetry, retry);
+  wire($("btn-error-retry"), retry);
   wire(els.btnConfig, () => action("config"));
   wire(els.btnLogs, () => action("logs"));
   wire(els.btnMore, () => setToolsOpen(!state.toolsOpen));
@@ -688,14 +721,14 @@
       return;
     }
     if (state.toolsOpen && ev.key === "Tab") {
-      const focusable = [...els.tools.querySelectorAll("button:not(:disabled), select:not([hidden])")];
+      const focusable = [...els.tools.querySelectorAll("button:not(:disabled), select:not([hidden]),textarea:not([hidden])")];
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
       else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
     }
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && ev.key.toLowerCase() === "r") {
       ev.preventDefault();
-      if (!state.busy && state.original) action("retry");
+      if (!state.busy && state.original) retry();
     }
   });
 

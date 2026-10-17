@@ -18,6 +18,9 @@ scripts/
 # internal task/feature notes for handing work to another agent — keep local
 TASKS-gpt.md
 
+# local agent writing-style instructions — not part of the app
+LANGUAGE_STYLE.md
+
 # local test documents (paper excerpts, formula test pages …) — never publish
 *.pdf
 *.docx
