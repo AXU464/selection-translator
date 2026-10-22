@@ -106,6 +106,27 @@ class HistoryStore:
         with self.lock:
             return copy.deepcopy(self.records)
 
+    def reuse_candidates(self, selection, target, scope, model, allow_legacy=False):
+        from .reuse import MAX_TEXT, normalize
+        query = normalize(selection)
+        candidates = []
+        with self.lock:
+            for row in self.records:
+                meta = row.get('meta', {})
+                if row['direction'] != target or row.get('truncated') or meta.get('reusable') is False:
+                    continue
+                recorded_scope = meta.get('request_scope')
+                if recorded_scope != scope:
+                    # Old history predates request fingerprints. Use it only
+                    # with the same model and no custom translation instruction.
+                    if recorded_scope or not allow_legacy or meta.get('model') != model:
+                        continue
+                source, text = row['original'], row['translation']
+                if max(len(source), len(text)) > MAX_TEXT or query not in normalize(source):
+                    continue
+                candidates.append({'source':source, 'text':text, 'model':meta.get('model', model)})
+        return sorted(candidates, key=lambda row:len(normalize(row['source'])))[:64]
+
     def add(self, row):
         with self.lock:
             if not self._valid(row):

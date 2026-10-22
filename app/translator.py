@@ -18,6 +18,8 @@ from .language import LOCAL_MODEL_LABEL, SAME_LANGUAGE_MESSAGE, matches_target_l
 from .document import prepare_document
 from .cache import TranslationCache
 from .chinese import normalize_translation
+from .reuse import find_reuse
+from .quality import untranslated_words, retry_review
 from .config import ROOT, DEFAULTS
 
 log = logging.getLogger(__name__)
@@ -29,7 +31,9 @@ TARGET_LANGUAGES = {
 
 _RULES = r"""- Output ONLY the translation. No preface, no notes, no explanation, no wrapping code fence.
 - Preserve semantic structure: Markdown headings, lists, tables, blockquotes, emphasis, links, and real paragraph boundaries. Mechanical PDF line wraps are not paragraph boundaries.
-- Keep authored LaTeX formulas exactly as written, including $...$, $$...$$, \(...\), \[...\] and \begin{...}...\end{...}. Only translate natural language inside \text{...}. The separate PDF rules below apply to copied visual mathematics which is NOT LaTeX source.
+- Keep authored LaTeX mathematical formulas exactly as written, including $...$, $$...$$, \(...\), \[...\] and math environments such as equation, align and matrix. Within formulas, only translate natural language inside \text{...}. The separate PDF rules below apply to copied visual mathematics which is NOT LaTeX source.
+- LaTeX prose and list environments are text to translate, not mathematical formulas or code. Preserve \begin{itemize}, \begin{enumerate}, \begin{description}, their matching \end commands, every \item, nesting, optional item labels and paragraph boundaries. Translate the prose in each item and label completely. Preserve text-formatting commands such as \textbf{...}, \textit{...}, \emph{...}, \section{...} and translate their prose arguments. Keep embedded formulas unchanged. Do not flatten lists into a paragraph, omit commands, or wrap the result in a code fence.
+- Preserve LaTeX heading commands (\section, \subsection, \subsubsection, including starred forms), layout controls such as \noindent, and explicit \setcounter values. Translate heading prose but do not replace heading commands with Markdown or invent section numbers. Preserve proper names with text accents, for example Damg{\aa}rd--Jurik, either as their original TeX spelling or the corresponding Unicode spelling Damgård–Jurik. Never drop or transliterate the accented letters.
 - Typeset formulas using KaTeX-compatible LaTeX: inline math in $...$, display math in $$...$$ on its own line. Add delimiters around bare LaTeX. Use \begin{aligned}...\end{aligned} inside $$ for multiline equations. Do not leave recovered formulas as plain text or code.
 - Keep the sentence flow around formulas: if a display formula interrupts a sentence, the text before and after it stays in the same paragraph, and no punctuation mark may end up at the start of a line or paragraph.
 - Do not translate code (inline or fenced), identifiers, file names, paths, URLs, e-mail addresses, citation keys, or units of measurement. Keep them verbatim.
@@ -55,7 +59,10 @@ def build_system_prompt(target: str, extra: str = "") -> str:
     if target != 'en':
         prompt += ('\n- Use simplified Chinese characters consistently throughout translated prose, '
                    'including Chinese inside \\text{...}. Do not mix in traditional Chinese characters. '
-                   'Keep verbatim code, identifiers, paths and URLs unchanged.')
+                   'Keep verbatim code, identifiers, paths and URLs unchanged.'
+                   '\n- Translate ordinary prose words completely instead of leaving them embedded '
+                   'in Chinese sentences. Retain proper names, technical identifiers and code. '
+                   'Before returning, check prose for accidental untranslated words and keep repeated terminology consistent.')
     extra = (extra or "").strip()
     if extra:
         prompt += f"\n\nAdditional instructions from the user:\n{extra}"
@@ -129,6 +136,9 @@ class TranslationResult:
     cancelled: bool = False
     cached: bool = False
     cacheable: bool = True
+    reused: bool = False
+    request_scope: str = ''
+    quality_words: list[str] = field(default_factory=list)
 
 
 class ApiError(RuntimeError):
@@ -269,6 +279,13 @@ class Translator:
         key_material = {'version': 1, 'source': text, 'target': target, 'endpoint': endpoint, 'body': body,
                         'credential': hashlib.sha256(str(frozen.get('api.api_key', '')).encode()).hexdigest()}
         cache_key = hashlib.sha256(json.dumps(key_material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        # Fingerprint request policy without the selection or PDF-layout hint.
+        # A contained selection may have fewer layout artifacts than its parent.
+        scope_material = copy.deepcopy(key_material)
+        scope_material.pop('source')
+        scope_material['body']['messages'] = [{'role':'system', 'content':build_system_prompt(
+            target, frozen.get('api.extra_instructions', ''))}]
+        scope = hashlib.sha256(json.dumps(scope_material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         enabled = bool(self.cfg.get('cache.enabled', True))
         try:
             limit = max(1, min(5000, int(self.cfg.get('cache.max_entries', 300))))
@@ -280,13 +297,37 @@ class Translator:
             hit = cache.get(cache_key, limit)
             if hit is not None:
                 return TranslationResult(text=normalize_translation(hit['text'], target), model=hit['model'], cached=True,
+                                         request_scope=scope,
+                                         quality_words=untranslated_words(text, hit['text'], target),
                                          cancelled=bool(cancel and cancel.is_set()))
+            # Exact cache wins. Retry and the disabled-cache setting bypass all
+            # local reuse, including history, so the user can always request anew.
+            try:
+                candidates = []
+                history = getattr(self, 'history_store', None)
+                if history is not None:
+                    candidates.extend(history.reuse_candidates(text, target, scope, str(frozen.get('api.model') or 'deepseek-flash'),
+                        allow_legacy=not str(frozen.get('api.extra_instructions', '')).strip()))
+                candidates.extend(cache.reuse_candidates(text, scope, limit))
+                reused = find_reuse(text, candidates, cancel)
+            except Exception:
+                log.warning('Local fragment reuse unavailable; translating normally (contents omitted)')
+                reused = None
+            if cancel is not None and cancel.is_set():
+                return TranslationResult(cancelled=True)
+            if reused:
+                return TranslationResult(text=normalize_translation(reused['text'], target),
+                                         model=reused['model'], reused=True, request_scope=scope,
+                                         quality_words=untranslated_words(text, reused['text'], target))
         body = copy.deepcopy(body)
         if bypass_cache and previous_translation:
             body['messages'].extend([
                 {'role': 'assistant', 'content': previous_translation},
-                {'role': 'user', 'content': 'Reassess the original source and your preceding translation for accuracy, terminology and mathematical fidelity. Return only an improved full translation in the same target language. Correct actual issues; do not change correct wording or mathematics merely to make it different.'},
+                {'role': 'user', 'content': 'Reassess the original source and your preceding translation for accuracy, terminology and mathematical fidelity. Perform a fresh comparison against the source rather than merely restating the previous answer. Check repeated notation against definitions in the source and address the stated retry reason. Return only an improved full translation in the same target language. Correct actual issues; do not change correct wording or mathematics merely to make it different.'},
             ])
+            review = retry_review(text, previous_translation, target)
+            if review:
+                body['messages'][-1]['content'] += '\n'+review
         key = str(frozen.get('api.api_key', '') or '').strip()
         if bypass_cache and retry_reason.strip():
             body['messages'].append({'role':'user','content':'Reason for retrying: '+retry_reason.strip()[:1000]+ '\nReturn only the complete corrected translation.'})
@@ -301,8 +342,10 @@ class Translator:
             try:
                 result = self._translate_once(text, target, on_delta, cancel, request=request)
                 result.text = normalize_translation(result.text, target)
+                result.request_scope = scope
+                result.quality_words = untranslated_words(text, result.text, target)
                 if enabled and self.cfg.get('cache.enabled', True) and cache is not None and result.cacheable and result.text and not result.cancelled and not (cancel and cancel.is_set()):
-                    cache.put(cache_key, result.text, result.model, limit)
+                    cache.put(cache_key, result.text, result.model, limit, source=text, scope=scope)
                 return result
             except _Retryable as exc:
                 last = exc

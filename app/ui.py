@@ -253,7 +253,7 @@ class UiController:
     # ------------------------------------------------------------ lifecycle
     def create_windows(self, base_url: str) -> None:
         state = config_mod.load_state()
-        left, top, right, bottom = winapi.work_area_logical(winapi.cursor_pos())
+        left, top, right, bottom = winapi.startup_work_area_logical()
         work_w, work_h = max(320, right - left), max(240, bottom - top)
         default_size = (work_w // RESULT_SIZE_DIVISOR, work_h // RESULT_SIZE_DIVISOR)
 

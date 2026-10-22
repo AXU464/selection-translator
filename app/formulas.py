@@ -10,6 +10,9 @@ log = logging.getLogger(__name__)
 HALF_LIFE = 30 * 86400
 STYLES = {'sup','sub','both','sup-sub','sub-sup','nested','plain','original','custom',
           'both-reversed','sup-sub-reversed','sub-sup-reversed','nested-reversed'}
+# Keep split-base choices separate from choices that retain the whole font group.
+# Existing content keys still rank both readings and retain handwritten formulas.
+STYLES |= {'split-base-' + style for style in STYLES - {'plain','original','custom'}}
 
 
 class FormulaPreferences:

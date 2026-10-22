@@ -19,7 +19,12 @@ class TranslationCache:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(self.path, timeout=.25)
         try:
+            db.execute('PRAGMA foreign_keys=ON')
             db.execute('CREATE TABLE IF NOT EXISTS translations (key TEXT PRIMARY KEY, value TEXT NOT NULL, used REAL NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS reuse_sources ('
+                       'key TEXT PRIMARY KEY REFERENCES translations(key) ON DELETE CASCADE, '
+                       'scope TEXT NOT NULL, source TEXT NOT NULL, normalized TEXT NOT NULL)')
+            db.execute('CREATE INDEX IF NOT EXISTS reuse_scope ON reuse_sources(scope)')
             return db
         except Exception:
             db.close()
@@ -57,7 +62,7 @@ class TranslationCache:
     def _trim(db, limit):
         db.execute('DELETE FROM translations WHERE key NOT IN (SELECT key FROM translations ORDER BY used DESC LIMIT ?)', (max(1, int(limit)),))
 
-    def put(self, key, text, model, limit):
+    def put(self, key, text, model, limit, *, source='', scope=''):
         with self.lock:
             if self.disabled:
                 return
@@ -67,11 +72,45 @@ class TranslationCache:
                 with db:
                     db.execute('INSERT OR REPLACE INTO translations VALUES (?, ?, ?)',
                                (key, json.dumps({'text': text, 'model': model}, ensure_ascii=False), time.time()))
+                    if source and scope:
+                        from .reuse import MAX_TEXT, normalize
+                        if max(len(source), len(text)) <= MAX_TEXT:
+                            db.execute('INSERT OR REPLACE INTO reuse_sources VALUES (?, ?, ?, ?)',
+                                       (key, scope, source, normalize(source)))
                     self._trim(db, limit)
                 # Reclaim old pages so large evictions cannot leave a growing file behind.
                 db.execute('VACUUM')
             except (OSError, sqlite3.Error, ValueError, TypeError):
                 self._failure()
+            finally:
+                if db is not None:
+                    db.close()
+
+    def reuse_candidates(self, selection, scope, limit):
+        """Query containing sources only, with the same request settings as today."""
+        from .reuse import normalize
+        with self.lock:
+            if self.disabled:
+                return []
+            db = None
+            try:
+                db = self._open()
+                with db:
+                    self._trim(db, limit)
+                    rows = db.execute(
+                        'SELECT r.source, t.value FROM reuse_sources r JOIN translations t ON t.key=r.key '
+                        'WHERE r.scope=? AND instr(r.normalized, ?)>0 '
+                        'ORDER BY length(r.normalized), t.used DESC LIMIT 64',
+                        (scope, normalize(selection))).fetchall()
+                result = []
+                for source, value in rows:
+                    data = json.loads(value)
+                    if isinstance(data, dict) and isinstance(data.get('text'), str) and isinstance(data.get('model'), str):
+                        result.append({'source':source, 'text':data['text'], 'model':data['model']})
+                return result
+            except (OSError, sqlite3.Error, ValueError, TypeError):
+                self._failure()
+                return []
             finally:
                 if db is not None:
                     db.close()

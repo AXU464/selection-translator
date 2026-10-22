@@ -118,6 +118,9 @@ article > :last-child { margin-bottom: 0; }
 article h1, article h2, article h3, article h4 { line-height: 1.45; margin: 1.25em 0 .55em; font-weight: 600; letter-spacing: -.2px; }
 article h1 { font-size: 1.4em; } article h2 { font-size: 1.22em; }
 article h3 { font-size: 1.08em; } article h4 { font-size: 1em; }
+article h2.latex-section { font-size: 1.32em; font-weight: 600; font-style: normal; margin-top: 1.45em; }
+article h3.latex-subsection { font-size: 1.17em; font-weight: 500; font-style: italic; margin-top: 1.15em; }
+article h4.latex-subsubsection { font-size: 1.04em; font-weight: 500; font-style: italic; margin-top: 1em; }
 article p, article ul, article ol { margin: .75em 0; }
 article ul, article ol { padding-left: 22px; }
 article li { margin: .25em 0; }

@@ -71,6 +71,7 @@
   }
   function unit(tex) {
     // A variable keeps its own scripts. Structural commands cannot be a base.
+    if(/^\s*[_^]/.test(tex))return null;
     const commands=[...tex.matchAll(/\\([A-Za-z]+)/g)];
     const simple=commands.every(cmd=>greek.has(cmd[1]))&&/^[\sA-Za-z0-9\\{}_^\u0370-\u03ff\u{1d400}-\u{1d7ff}]+$/u.test(tex);
     let depth=0;
@@ -86,27 +87,47 @@
     const variants=[];
     const add=(id,value)=>{if(!variants.some(v=>v.tex===value))variants.push({id,tex:value,label:names[id]||'当前写法'});};
     if(!simple)add('original',tex.trim());
-    if(tail.length) {
-      const all=tail.join(' '), a=tail[0], b=tail.slice(1).join(' ')||tail[0];
-      add('sup',`${base}^{${all}}`);add('sub',`${base}_{${all}}`);
-      if(tail.length>1) {
-      add('both',`${base}^{${a}}_{${b}}`);
-      add('sup-sub',`${base}^{${a}_{${b}}}`);
-      add('sub-sup',`${base}_{${a}^{${b}}}`);
-      const cut=Math.max(1,Math.ceil(tail.length/2));
-      const top=tail.slice(0,cut), bottom=tail.slice(cut);
-      const nested=(items,fallback)=>items.length>1?`${items[0]}_{${items.slice(1).join(' ')}}`:(items[0]||fallback);
-      add('nested',`${base}^{${nested(top,a)}}_{${nested(bottom,b)}}`);
-      add('both-reversed',`${base}^{${b}}_{${a}}`);
-      add('sup-sub-reversed',`${base}^{${b}_{${a}}}`);
-      add('sub-sup-reversed',`${base}_{${b}^{${a}}}`);
-      add('nested-reversed',`${base}^{${nested(bottom,b)}}_{${nested(top,a)}}`);
+    function attachments(items,prefix='') {
+      const base=items[0],tail=items.slice(1);
+      const variant=(id,value)=>{
+        add(prefix+id,value);
+        if(prefix){
+          const v=variants.find(v=>v.id===prefix+id);
+          if(v)v.label=(names[id.replace('-reversed','')]||'组合写法')+
+            (id.endsWith('-reversed')?'（拆分字母，调换位置）':'（拆分字母）');
+        }
+      };
+      if(tail.length) {
+        const all=tail.join(' '), a=tail[0], b=tail.slice(1).join(' ')||tail[0];
+        variant('sup',`${base}^{${all}}`);variant('sub',`${base}_{${all}}`);
+        if(tail.length>1) {
+          variant('both',`${base}^{${a}}_{${b}}`);
+          variant('sup-sub',`${base}^{${a}_{${b}}}`);
+          variant('sub-sup',`${base}_{${a}^{${b}}}`);
+          const cut=Math.max(1,Math.ceil(tail.length/2));
+          const top=tail.slice(0,cut), bottom=tail.slice(cut);
+          const nested=(items,fallback)=>items.length>1?`${items[0]}_{${items.slice(1).join(' ')}}`:(items[0]||fallback);
+          variant('nested',`${base}^{${nested(top,a)}}_{${nested(bottom,b)}}`);
+          variant('both-reversed',`${base}^{${b}}_{${a}}`);
+          variant('sup-sub-reversed',`${base}^{${b}_{${a}}}`);
+          variant('sub-sup-reversed',`${base}_{${b}^{${a}}}`);
+          variant('nested-reversed',`${base}^{${nested(bottom,b)}}_{${nested(top,a)}}`);
+        }
       }
+    }
+    attachments(atoms);
+    // A font wrapper can hide copied script letters in the base: mathit{ms}_i
+    // may mean m_{si}. Offer that reading without changing the API default or
+    // the content key used by existing scores and remembered handwritten edits.
+    const grouped=base.match(/^\\(mathcal|mathbf|mathit|mathrm|mathsf|mathtt|mathbb|mathfrak|boldsymbol)\{([^{}]+)\}$/);
+    const letters=grouped&&tokens(grouped[2]);
+    if(tail.length&&letters&&letters.length>1&&letters.length+tail.length<=5&&letters.every(x=>!/^\d$/.test(x))) {
+      attachments([`\\${grouped[1]}{${letters[0]}}`,...letters.slice(1),...tail],'split-base-');
     }
     add('plain',atoms.join(' '));
     let current=variants.find(v=>v.tex===tex.trim());
     if(!current) {add('original',tex.trim());current=variants[variants.length-1];}
-    for(const v of variants)if(v.id.endsWith('-reversed'))v.label=(names[v.id.replace('-reversed','')]||'组合写法')+'（调换位置）';
+    for(const v of variants)if(v.id.endsWith('-reversed')&&!v.id.startsWith('split-base-'))v.label=(names[v.id.replace('-reversed','')]||'组合写法')+'（调换位置）';
     return {content:atoms.join(' '),structure:shape,variants,current:current.id,styles};
   }
   function scan(tex) {
@@ -122,12 +143,17 @@
     function walk(start,end,depth=0) {
     if(depth>32)return;
     for(let i=start;i<end;){
-      if(tex[i]==='{'){const j=atomEnd(tex,i,end);walk(i+1,j-1,depth+1);i=j;continue;}
+      if(tex[i]==='{'){const j=atomEnd(tex,i,end);walk(i+1,j-1,depth+1);i=scripts(j,end);continue;}
+      // Scripts after grouped bases such as (x_i-x_j)^2 belong to that base.
+      // Never wrap their naked argument as a new variable, which would turn
+      // ^2 into ^\textcolor{...} and invalidate otherwise correct KaTeX.
+      if(tex[i]==='_'||tex[i]==='^'){i=scripts(i,end);continue;}
+      if(tex[i]===')'||tex[i]===']'){i=scripts(i+1,end);continue;}
       const cmd=tex.slice(i).match(/^\\([A-Za-z]+)/);
       if(cmd&&!greek.has(cmd[1])&&!fonts.has(cmd[1])){
         i+=cmd[0].length;
         const name=cmd[1];
-        if(['left','right','middle'].includes(name)){i=atomEnd(tex,i,end);continue;}
+        if(['left','right','middle'].includes(name)){i=atomEnd(tex,i,end);if(name==='right')i=scripts(i,end);continue;}
         if(name==='begin'||name==='end') {
           const a=space(tex,i,end),b=atomEnd(tex,a,end),env=tex.slice(a+1,b-1);i=b;
           if(name==='begin'&&env==='array')i=atomEnd(tex,i,end);

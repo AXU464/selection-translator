@@ -35,7 +35,7 @@
       <button class="secondary" id="test-connection" type="button">测试连接</button><p id="connection-status" class="help" role="status" aria-live="polite"></p>
       <label class="field" for="api-model">模型名称</label><input id="api-model" data-key="api.model" type="text" spellcheck="false" list="model-options" maxlength="120" placeholder="deepseek-flash"><datalist id="model-options"><option value="deepseek-flash"></datalist>
       <label class="row toggle"><span>流式显示<small>翻译过程中逐步显示译文</small></span><input data-key="api.stream" type="checkbox"><span class="switch"></span></label>
-      <label class="row toggle"><span>本地翻译缓存<small>重复翻译直接复用；「重新翻译」始终重新请求</small></span><input data-key="cache.enabled" type="checkbox"><span class="switch"></span></label>
+      <label class="row toggle"><span>本地翻译缓存<small>重复选区直接读取，包含在旧原文中的完整句段可沿用对应译文。「重新翻译」始终重新请求。</small></span><input data-key="cache.enabled" type="checkbox"><span class="switch"></span></label>
       <label class="field" for="cache-limit">最多缓存条数</label><input id="cache-limit" data-key="cache.max_entries" type="number" min="10" max="5000" step="1">
       <label class="row toggle"><span>深度思考<small>需要模型支持，生成时间可能更长</small></span><input data-key="api.thinking" type="checkbox"><span class="switch"></span></label>
       <label class="field" for="instructions">额外翻译要求 <span class="optional">选填</span></label><textarea id="instructions" data-key="api.extra_instructions" rows="3" maxlength="8000" placeholder="例如：使用密码学领域的常用术语，保留英文缩写。"></textarea>
@@ -77,7 +77,7 @@
       <h3 class="subheading">自己输入 LaTeX</h3><p>列表最后一项可输入裸公式，例如 <code>g^{m_i}</code>。不要添加 $、$$、\[…\] 或 \(…\)。输入后即时预览，语法错误会显示在输入框旁。应用后跟随原来的行内或行间形态。</p>
       <p>修改立即更新历史。复制和导出使用当前显示写法。选错了可以再次右键选择，不提供撤销。</p>
       <h3 class="subheading">键盘操作说明</h3><p>按 Tab 聚焦高亮公式，按 Enter 或 Shift+F10 打开列表。方向键切换候选，Home 和 End 到首尾，Enter 确认，Esc 关闭。手写输入框中的 Enter 保持换行。</p>
-      <h3 class="subheading">写法学习</h3><p>关闭卡片或切换翻译时，每处最终显示的写法记一次保留。被改掉的写法扣分。相同内容的权重更高，相同结构的权重较低，分数按 30 天半衰期衰减。新翻译优先显示高分写法，已修改并保存的历史保持原写法。</p>
+      <h3 class="subheading">写法学习</h3><p>新翻译默认显示 API 返回的公式，历史评分只调整右键候选的排列顺序。关闭卡片或切换翻译时，每处最终显示的写法记一次保留，被改掉的写法扣分。相同内容权重更高，分数按 30 天半衰期衰减。已修改并保存的历史保持上次写法。</p>
       <button id="clear-formula-learning" class="secondary">清除公式学习</button><p id="formula-learning-status" class="help" role="status"></p>
       <h3 class="subheading">本地存储占用</h3><p>自动数据总预算为 1GB。超限按日志、缓存、最旧历史、最久未用学习偏好的顺序清理。导出文件单独统计，请自行清理。</p>
       <p id="storage-usage" class="help" role="status"></p><button id="refresh-storage" class="secondary">刷新占用</button>

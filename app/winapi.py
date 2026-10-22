@@ -181,6 +181,7 @@ SMTO_BLOCK = 0x0001
 SMTO_ABORTIFHUNG = 0x0002
 
 MONITOR_DEFAULTTONEAREST = 0x00000002
+MONITOR_DEFAULTTOPRIMARY = 0x00000001
 HTCLIENT = 1
 GA_ROOT = 2
 
@@ -264,15 +265,39 @@ def to_physical(point: tuple[int, int]) -> tuple[int, int]:
     return int(round(point[0] * scale)), int(round(point[1] * scale))
 
 
-def work_area_logical(point: tuple[int, int]) -> tuple[int, int, int, int]:
-    """Work area (taskbar excluded) of the monitor nearest to a physical point."""
-    mon = user32.MonitorFromPoint(POINT(int(point[0]), int(point[1])), MONITOR_DEFAULTTONEAREST)
+def startup_work_area_logical() -> tuple[int, int, int, int]:
+    """Choose the initial monitor even while the input desktop is unavailable."""
+    # Windows can launch Startup shortcuts before the input desktop becomes
+    # accessible during sign-in or a lock-screen transition. GetCursorPos then
+    # raises ERROR_ACCESS_DENIED. Cursor placement is optional at startup, so
+    # retry briefly and use the primary monitor instead of terminating the app.
+    # Keep these waits out of cursor_pos(), which also runs in input hooks.
+    for attempt in range(3):
+        try:
+            point = cursor_pos()
+        except win32api.error as error:
+            if attempt < 2:
+                time.sleep(0.1)
+                continue
+            log.warning('Startup cursor unavailable after 3 attempts (Win32 error %s); '
+                        'using primary monitor', error.winerror)
+            return work_area_logical()
+        if attempt:
+            log.info('Startup cursor access recovered on attempt %s', attempt + 1)
+        return work_area_logical(point)
+
+
+def work_area_logical(point: tuple[int, int] | None = None) -> tuple[int, int, int, int]:
+    """Monitor work area, excluding the taskbar. None selects the primary monitor."""
+    location = POINT(int(point[0]), int(point[1])) if point is not None else POINT(0, 0)
+    policy = MONITOR_DEFAULTTONEAREST if point is not None else MONITOR_DEFAULTTOPRIMARY
+    mon = user32.MonitorFromPoint(location, policy)
     info = MONITORINFO()
     info.cbSize = ctypes.sizeof(MONITORINFO)
     if mon and user32.GetMonitorInfoW(mon, ctypes.byref(info)):
         rect = info.rcWork
     else:  # pragma: no cover - fallback for exotic setups
-        rect = wintypes.RECT(0, 0, *win32api.GetSystemMetrics(0), win32api.GetSystemMetrics(1))
+        rect = wintypes.RECT(0, 0, win32api.GetSystemMetrics(0), win32api.GetSystemMetrics(1))
     left, top = to_logical((rect.left, rect.top))
     right, bottom = to_logical((rect.right, rect.bottom))
     return left, top, right, bottom

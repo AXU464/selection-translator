@@ -43,9 +43,15 @@
     if(context!==ctx || !u.node.isConnected)return;
     try{render(tex);}catch(_){return;}
     const oldTop=document.getElementById('reading').scrollTop;
+    const previous={tex:u.tex,selected:u.selected,corrected:[...u.corrected]};
+    const previousChange=ctx.changes.get(u.part.index);
     if(tex!==u.tex)u.corrected.push(u.selected);
     u.selected=id;u.tex=tex;
-    rebuild(ctx,u.part,u);
+    try{rebuild(ctx,u.part,u);}catch(_){
+      Object.assign(u,previous);
+      if(previousChange===undefined)ctx.changes.delete(u.part.index);else ctx.changes.set(u.part.index,previousChange);
+      close();ctx.notice('这处写法暂时无法应用，已保留原公式。');return;
+    }
     close();ctx.overflow();document.getElementById('reading').scrollTop=oldTop;
     notify(ctx);
   }
@@ -119,12 +125,12 @@
     }
     marked+=template.slice(cursor);wrapped+=template.slice(cursor);
     const locator=document.createElement('span');locator.innerHTML=render(marked,part.display);
-    node.innerHTML=render(wrapped,part.display);
-    node.querySelector('.katex-mathml').replaceWith(full.querySelector('.katex-mathml'));
-    const located=[...locator.querySelectorAll('.katex-html *')],visible=[...node.querySelectorAll('.katex-html *')];
+    const display=document.createElement('span');display.innerHTML=render(wrapped,part.display);
+    display.querySelector('.katex-mathml').replaceWith(full.querySelector('.katex-mathml'));
+    const located=[...locator.querySelectorAll('.katex-html *')],visible=[...display.querySelectorAll('.katex-html *')];
     // KaTeX color scopes do not add HTML elements. Keep source colors in the
     // visible render and use the parallel tree only to identify each unit.
-    if(located.length!==visible.length||located.some((n,i)=>n.tagName!==visible[i].tagName))return;
+    if(located.length!==visible.length||located.some((n,i)=>n.tagName!==visible[i].tagName))throw new Error('Formula unit mapping unavailable');
     for(const u of members){
       const color=document.createElement('span');color.style.color=u.marker;
       const index=located.findIndex(n=>n.style.color===color.style.color),target=visible[index];
@@ -133,6 +139,7 @@
       if(old){target.replaceWith(old);u.node=old;}
       else {u.node=target;enable(ctx,u,target);}
     }
+    node.replaceChildren(...display.childNodes);
   }
   function enable(ctx,u,node){
     node.dataset.formulaOffset=u.offset;node.dataset.formulaTemplate=u.template;
@@ -149,12 +156,14 @@
       try{preferences=await api()?.formula_preferences?.()||{content:{},structure:{},epoch:0};}catch(_){preferences={content:{},structure:{},epoch:0};}
       if(current!==session)return;
       const ctx=context={el,source,parts,entry,update,notice,overflow,saved:source,changes:new Map(),units:new Map()};
+      let warned=false;
       for(const part of parts){
         if(part.type!=='math'||part.start<0)continue;
         const prior=part.grouped?[]:savedUnits.filter(u=>u.index===part.index);
         const partTemplate=prior[0]?.partTemplate||prior[0]?.template||part.tex;
         const root=el.querySelector(`[data-formula-part="${part.index}"]`);
         if(!root)continue;
+        try{
         const members=[];
         for(const fragment of FormulaUnits.scan(partTemplate)){
         const saved=prior.find(u=>(u.offset||0)===fragment.start),template=fragment.tex,unit=fragment.unit;
@@ -162,11 +171,18 @@
         if(remembered&&!unit.variants.some(v=>v.tex===remembered))unit.variants.push({id:'custom',tex:remembered,label:'记住的手写公式'});
         const u={unit,node:root,part,partTemplate,template,offset:fragment.start,end:fragment.end,tex:saved?.tex||template,selected:saved?.selected||unit.current,corrected:[]};
         ctx.units.set(part.index+':'+fragment.start,u);members.push(u);
-        const ranked=[...unit.variants];
-        ranked.sort((a,b)=>score(unit,b.id)-score(unit,a.id));
-        if(!reviewed&&ranked.length){const best=ranked[0];try{render(best.tex);u.tex=best.tex;u.selected=best.id;}catch(_){}}
+        // Preserve the API's writing (or an explicit saved edit). Preferences
+        // rank the menu only and must never silently replace correct scripts.
         }
         if(members.length)rebuild(ctx,part);
+        }catch(_){
+          // One unsupported editing boundary must not disable the entire card.
+          // Rendering already succeeded before attachment, so restore that math.
+          for(const [key,u] of ctx.units)if(u.part===part)ctx.units.delete(key);
+          ctx.changes.delete(part.index);
+          root.innerHTML=render(part.tex,part.display);
+          if(!warned){warned=true;notice('部分公式暂不可调整，已保留原始显示。');}
+        }
       }
       overflow();if(ctx.units.size)notify(ctx);
     },

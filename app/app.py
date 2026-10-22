@@ -23,6 +23,7 @@ from .ui import UiController
 from .history import HistoryStore
 from .formulas import FormulaPreferences
 from .storage import StorageBudget
+from .quality import untranslated_words
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class Application:
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="translate")
 
         self.history_store = HistoryStore(cfg.path.parent / 'local-data' / 'history.jsonl', cfg.get('history.max_entries', 500))
+        self.translator.history_store = self.history_store
         self.ui.history_store = self.history_store
         self.formula_preferences=FormulaPreferences(cfg.path.parent/'local-data'/'formula-preferences.sqlite3')
         self.ui.formula_preferences=self.formula_preferences
@@ -478,6 +480,10 @@ class Application:
             "prompt_tokens": result.usage.prompt_tokens,
             "completion_tokens": result.usage.completion_tokens,
             "cached": result.cached,
+            "reused": result.reused,
+            "request_scope": result.request_scope,
+            "reusable": result.cacheable and not result.cancelled,
+            "quality_words": result.quality_words,
         })
 
     def _finish_job(self, data: dict) -> None:
@@ -490,7 +496,16 @@ class Application:
             "prompt_tokens": data.get("prompt_tokens") or 0,
             "completion_tokens": data.get("completion_tokens") or 0,
             "cached": bool(data.get('cached')),
+            "reused": bool(data.get('reused')),
+            "request_scope": data.get('request_scope') or '',
+            "reusable": data.get('reusable', True),
+            "quality_words": data.get('quality_words') or [],
         }
+        if meta['reused']:
+            # The extracted math already belongs to a saved translation. Keep
+            # that writing when opening it instead of applying fresh defaults.
+            # The editor still attaches, so each new occurrence stays editable.
+            meta['formula_reviewed'] = True
         self.ui.set_result_final(text, meta)
 
         entry = {
@@ -574,6 +589,8 @@ class Application:
         self.ui.set_result_title(f"译文 · {DIRECTION_LABELS[entry['direction']]}")
         self.ui.set_result_loading(entry["direction"], entry["original"], entry["id"],
                                    (entry.get("meta") or {}).get("model", self.translator.model))
-        self.ui.set_result_final(entry["translation"], entry.get("meta") or {})
+        meta = dict(entry.get('meta') or {})
+        meta['quality_words'] = untranslated_words(entry['original'], entry['translation'], entry['direction'])
+        self.ui.set_result_final(entry["translation"], meta)
         self.ui.show_result(activate=True)
         self._push_history()

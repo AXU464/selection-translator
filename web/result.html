@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="result.css">
 <script src="themes.js"></script>
 <script src="formula-units.js"></script>
+<script src="latex-text.js"></script>
 </head>
 <body>
 <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
@@ -67,6 +68,7 @@
     <div id="stream-note" class="stream-note" role="status" hidden>正在翻译…</div>
     <article id="doc" aria-label="译文"></article>
     <div id="cache-note" class="stream-note" role="status" hidden>本地缓存 · 未调用 API</div>
+    <button class="source-note" id="quality-note" hidden></button>
     <button class="source-note" id="source-note" hidden>公式已尝试重构 · 对照复制原文</button>
   </div>
 </main>
@@ -308,6 +310,11 @@
       if (!looksLikeMath(tex)) return m;
       return lead + push({ type: "math", display: false, tex, raw: "$" + tex + "$" });
     });
+    // Convert prose only after code and explicit mathematics are protected.
+    // Original math offsets still refer to the unchanged translation source,
+    // so editing a formula retains the surrounding authored LaTeX commands.
+    const prose = LatexText.convert(text);
+    text = prose.text;
     // Formulas the model left without any delimiter.
     text = text.replace(RE_RUN, (run) => {
       const span = findMathSpan(run);
@@ -317,7 +324,7 @@
       const token = push({ type: "math", display: false, tex, raw: tex });
       return run.slice(0, span.start) + token + run.slice(span.end);
     });
-    return { text, parts };
+    return { text, parts, headings:prose.headings };
   }
 
   function partToHtml(part) {
@@ -349,7 +356,7 @@
   }
 
   function renderInto(el, source) {
-    let { text, parts } = protect(source);
+    let { text, parts, headings } = protect(source);
     if(el===els.doc&&!state.streaming){
       text=FormulaUnits.groupFragments(String(source).replace(/\r\n?/g,'\n'),state.original,parts,text)||text;
     }
@@ -364,6 +371,7 @@
       return part ? partToHtml(part) : m;
     });
     el.innerHTML = html;
+    LatexText.decorate(el,headings);
     el.querySelectorAll("table").forEach((table) => {
       if (table.parentElement && table.parentElement.classList.contains("table-wrap")) return;
       const wrap = document.createElement("div");
@@ -538,6 +546,7 @@
       els.metaUsage.textContent = "";
       els.metaTime.textContent = "";
       $('cache-note').hidden = true;
+      $('quality-note').hidden = true;
       updateMetaCounts();
     },
 
@@ -555,12 +564,17 @@
       scheduleRender();
       if (meta) {
         state.formulaReviewed=!!meta.formula_reviewed;state.formulaUnits=meta.formula_units||[];
-        $('cache-note').hidden = !meta.cached;
+        $('cache-note').hidden = !meta.cached && !meta.reused;
+        $('cache-note').textContent = meta.reused ? '沿用旧译文 · 本地截取对应部分 · 未调用 API' : '本地缓存 · 未调用 API';
+        const words = Array.isArray(meta.quality_words) ? meta.quality_words.filter(w=>typeof w==='string').slice(0,8) : [];
+        $('quality-note').hidden = words.length===0;
+        $('quality-note').textContent = words.length ? '可能有正文漏译：'+words.join('、')+' · 点击复查' : '';
+        $('quality-note').dataset.words = words.join('、');
         els.metaModel.textContent = meta.model || "—";
         const usage = [];
         if (meta.completion_tokens) usage.push("输出 " + meta.completion_tokens.toLocaleString() + " tokens");
         if (meta.prompt_tokens) usage.push("输入 " + meta.prompt_tokens.toLocaleString());
-        els.metaUsage.textContent = meta.cached ? '本地缓存 · 本次未调用 API' : usage.join(" · ");
+        els.metaUsage.textContent = meta.reused ? '沿用旧译文 · 本次未调用 API' : meta.cached ? '本地缓存 · 本次未调用 API' : usage.join(" · ");
         els.metaTime.textContent = meta.elapsed ? meta.elapsed.toFixed(2) + " s" : "";
       }
     },
@@ -676,6 +690,13 @@
     state.sourceRaw = true;
     window.__app.showOriginal(true);
     els.originalHead.focus({ preventScroll: true });
+  });
+  wire($('quality-note'), () => {
+    setToolsOpen(true);
+    $('retry-reason').value='custom';
+    $('retry-reason').dispatchEvent(new Event('change'));
+    $('retry-custom').value='请检查并译出正文中可能漏译的普通英文词：'+$('quality-note').dataset.words+'。保留专有名称、标识符、代码和公式，不要为了改写而更改已经正确的内容。';
+    $('retry-custom').focus();
   });
   function action(name) {
     setToolsOpen(false);

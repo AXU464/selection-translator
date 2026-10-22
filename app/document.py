@@ -17,7 +17,9 @@ _PROTECTED = re.compile(
     r"|(?P<ticks>`+)[^\n]*?(?P=ticks)"
     r"|\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)"
     r"|(?<![\\\w$])\$(?!\s)[^$\n]+?(?<!\s)\$(?![\w$])"
-    r"|\\begin\{(?P<env>[^}]+)\}[\s\S]*?\\end\{(?P=env)\}"
+    # List bodies are prose. Protect their individual commands and mathematics,
+    # while still normalizing and checking the translated item text.
+    r"|\\begin\{(?P<env>(?!(?:itemize|enumerate|description)\})[^}]+)\}[\s\S]*?\\end\{(?P=env)\}"
     r"|\\[A-Za-z]+(?:\{[^{}]*\})*"
 )
 _LIGATURES = str.maketrans({"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
