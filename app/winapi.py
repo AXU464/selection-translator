@@ -395,24 +395,35 @@ def send_message_timeout(hwnd: int, msg: int, wparam: int, lparam: int,
     return out.value if ok else None
 
 
-def is_client_area(point: tuple[int, int]) -> bool:
+def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Snapshot screen geometry so a later capture can reject a moved window."""
+    if not hwnd:
+        return None
+    try:
+        return tuple(win32gui.GetWindowRect(hwnd))
+    except Exception:
+        return None
+
+
+def is_client_area(point: tuple[int, int], *, timeout_ms: int = 60) -> bool:
     """True when a mouse-down at `point` lands in the client area of a window.
 
     Filters out drags that started on a title bar, border, scroll bar or menu,
-    which are never text selections.  On any doubt we answer True so that real
-    selections are not lost.
+    which are never text selections. A failed probe rejects automatic capture
+    because sending Ctrl+C to an unknown target can interrupt a terminal.
     """
     hwnd = window_from_point(point)
     if not hwnd:
-        return True
+        return False
     if window_class(hwnd).lower() == "scrollbar":
         return False
     root = root_window(hwnd)
     x, y = int(point[0]) & 0xFFFF, int(point[1]) & 0xFFFF
     lparam = win32api.MAKELONG(x, y)
-    hit = send_message_timeout(root, win32con.WM_NCHITTEST, 0, lparam)
+    hit = send_message_timeout(root, win32con.WM_NCHITTEST, 0, lparam,
+                               timeout_ms=timeout_ms)
     if hit is None:
-        return True
+        return False
     return hit == HTCLIENT
 
 
@@ -540,6 +551,9 @@ class InputHooks:
         self._click_point = (0, 0)
         self._button_down = False
         self._down_point = (0, 0)
+        self._down_hwnd = 0
+        self._down_rect = None
+        self._down_client = False
         self._max_drag = 0.0
         self._is_double = False
         self._down_keys: set[int] = set()
@@ -703,6 +717,18 @@ class InputHooks:
                         self._button_down = True
                         self._down_point = point
                         self._max_drag = 0.0
+                        # 2026-10-22：修复拖动终端标题栏导致 Codex 正常退出的问题。
+                        # 必须在鼠标按下时记录区域与窗口几何。拖动结束后，旧的
+                        # 屏幕坐标可能已经落到正文，甚至落在另一个窗口上。
+                        # 若此时才做命中测试，就会误判为划词并发送 Ctrl+C。
+                        # 终端无选区时，该按键可能中断或退出正在运行的 CLI。
+                        # 8ms 限制全局钩子的等待时间，探测失败则跳过自动取词。
+                        self._down_hwnd = root_window(window_from_point(point))
+                        self._down_rect = window_rect(self._down_hwnd)
+                        self._down_client = bool(
+                            self._down_hwnd and self._down_rect
+                            and is_client_area(point, timeout_ms=8)
+                        )
                         self._emit("mouse_down", {"pt": point, "double": self._is_double,
                                                   "button": "left"})
                     elif msg == WM_LBUTTONUP:
@@ -713,6 +739,9 @@ class InputHooks:
                         if was_down:
                             self._emit("mouse_up", {"pt": point, "start": self._down_point,
                                                     "drag": drag, "double": self._is_double,
+                                                    "start_hwnd": self._down_hwnd,
+                                                    "start_rect": self._down_rect,
+                                                    "start_client": self._down_client,
                                                     "button": "left"})
                     elif msg in (WM_RBUTTONDOWN, WM_MBUTTONDOWN):
                         self._emit("mouse_down", {"pt": point, "double": False,

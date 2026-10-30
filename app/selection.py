@@ -30,6 +30,7 @@ class CaptureRequest:
     expected_hwnd: int = 0              # only re-read this source window
     expected_text: str | None = None    # restore only an unchanged selection
     restore_job_id: int | None = None   # reject late restores after another job
+    source_rect: tuple[int, int, int, int] | None = None
 
 
 @dataclass
@@ -118,15 +119,21 @@ class SelectionCapture:
             if kind == "mouse_up":
                 if data.get("button") != "left":
                     return
+                # 使用按下时的快照，不能改回松开后对 start 屏幕坐标重新命中测试。
+                # 标题栏拖动会改变该坐标对应的窗口区域，旧实现因此误发 Ctrl+C。
+                if not data.get("start_client") or not data.get("start_hwnd") or not data.get("start_rect"):
+                    return
                 point = tuple(data.get("pt") or (0, 0))
                 start = tuple(data.get("start") or point)
                 drag = float(data.get("drag") or 0.0)
                 threshold = float(self.cfg.get("behavior.drag_threshold_px", 5))
                 is_double = bool(data.get("double"))
+                source = {"expected_hwnd": int(data["start_hwnd"]),
+                          "source_rect": tuple(data["start_rect"])}
                 if drag >= threshold:
-                    self._enqueue(CaptureRequest("popup", reason="drag", point=point, start=start))
+                    self._enqueue(CaptureRequest("popup", reason="drag", point=point, start=start, **source))
                 elif is_double and bool(self.cfg.get("behavior.double_click_select", True)):
-                    self._enqueue(CaptureRequest("popup", reason="double", point=point, start=start))
+                    self._enqueue(CaptureRequest("popup", reason="double", point=point, start=start, **source))
             elif kind == "mouse_down":
                 self._maybe_dismiss(tuple(data.get("pt") or (0, 0)), data.get("button"))
             elif kind == "wheel":
@@ -267,11 +274,10 @@ class SelectionCapture:
             if self._is_own_window(request.start):
                 log.debug("ignoring gesture inside our own window")
                 return
-            if not winapi.is_client_area(request.start):
-                log.debug("ignoring gesture outside a client area")
-                return
-
-        text, info = self._grab_text(expected_hwnd=request.expected_hwnd)
+        # 延迟与排队期间窗口仍可能移动。将来源句柄和初始矩形一起传到注入前检查。
+        # 即便按下时位于正文，也不能向后来切换到前台的其他程序发送复制按键。
+        text, info = self._grab_text(expected_hwnd=request.expected_hwnd,
+                                     expected_rect=request.source_rect)
         if request.expected_text is not None and text != request.expected_text:
             log.debug("not restoring popup: the original selection changed or disappeared")
             return
@@ -296,15 +302,25 @@ class SelectionCapture:
             log.debug("own window check failed", exc_info=True)
         return False
 
-    def _grab_text(self, expected_hwnd: int = 0) -> tuple[str, dict]:
+    def _grab_text(self, expected_hwnd: int = 0,
+                   expected_rect: tuple[int, int, int, int] | None = None) -> tuple[str, dict]:
         cfg = self.cfg
+        foreground = winapi.foreground_window()
+        if expected_hwnd and foreground != expected_hwnd:
+            return "", {"reason": "source-changed"}
+        if expected_rect is not None and winapi.window_rect(foreground) != expected_rect:
+            return "", {"reason": "source-moved"}
+
         restore = bool(cfg.get("behavior.restore_clipboard", True))
         before = clipboard.sequence_number()
         snap = clipboard.snapshot() if restore else None
 
-        foreground = winapi.foreground_window()
-        if expected_hwnd and foreground != expected_hwnd:
+        # 剪贴板备份可能耗时，之前通过检查的窗口可能已移动、缩放或失去焦点。
+        # 真正发送 Ctrl+C 前再次核对，避免把复制操作变成另一个进程的中断信号。
+        if winapi.foreground_window() != foreground:
             return "", {"reason": "source-changed"}
+        if expected_rect is not None and winapi.window_rect(foreground) != expected_rect:
+            return "", {"reason": "source-moved"}
         log.debug("capture: injecting Ctrl+C into %r (%s)",
                   winapi.window_title(foreground)[:40], winapi.window_class(foreground))
 
