@@ -307,7 +307,7 @@ class UiController:
             shadow=True,
             background_color="#fafbf8",
             min_size=RESULT_MIN,
-            on_top=bool(self.cfg.get("ui.result_on_top", False)),
+            on_top=bool(self.cfg.get("ui.result_on_top", True)),
             text_select=True,
             zoomable=True,
             js_api=_ResultApi(self),
@@ -398,7 +398,7 @@ class UiController:
         self.apply_appearance()
         self.push_hotkeys()
         if self.result is not None:
-            self.result.on_top = bool(self.cfg.get("ui.result_on_top", False))
+            self.result.on_top = bool(self.cfg.get("ui.result_on_top", True))
             self._apply_result_styles()
         if "ui.fit_to_content" in keys:
             self._manual_size = False

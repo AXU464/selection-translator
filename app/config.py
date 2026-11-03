@@ -54,7 +54,7 @@ DEFAULTS: dict = {
         "theme": "system",
         "font_size": 14,
         "popup_offset": [12, 18],
-        "result_on_top": False,
+        "result_on_top": True,
         # false = fixed card (a quarter of the work area) that scrolls; true =
         # shrink the window to fit short translations.
         "fit_to_content": False,

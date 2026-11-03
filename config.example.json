@@ -30,7 +30,7 @@
     "theme": "system",
     "font_size": 14,
     "popup_offset": [12, 18],
-    "result_on_top": false,
+    "result_on_top": true,
     "fit_to_content": true,
     "result_in_taskbar": false,
     "debug_webview": false
