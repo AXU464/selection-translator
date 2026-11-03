@@ -265,7 +265,7 @@ python -m pip install -r requirements.txt
   "ui": {
     "theme": "system",                // system 或 themes.json 里的主题 ID
     "font_size": 14,
-    "result_on_top": false,           // 结果卡片是否置顶
+    "result_on_top": true,           // 结果卡片是否置顶
     "fit_to_content": false,          // true = 短译文时自动收缩卡片高度
     "result_in_taskbar": false,       // false = 卡片不进任务栏/Alt+Tab
     "debug_webview": false            // true = 打开 WebView2 开发者工具
