@@ -18,6 +18,7 @@ _ABBREVIATION = re.compile(r'\b(?:Mr|Mrs|Ms|Dr|Prof|Fig|Eq|Sec|St|vs|etc|al|e\.g
 
 
 def normalize(text):
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
     # Do not case-fold or apply NFKC: either could change identifiers or math.
     # Whitespace inside authored code/TeX stays significant, especially Python
     # indentation. Only prose whitespace may vary between selections.
@@ -97,6 +98,39 @@ def sentences(text):
     return result
 
 
+def _display_body(literal):
+    if literal.startswith(('\\[', '$$')):
+        return literal[2:-2].strip()
+    return None
+
+
+def _display_units(text):
+    """Keep a display and its introducing sentence together as one unit."""
+    result = []
+    start = 0
+    found = False
+    for match in _PROTECTED.finditer(text):
+        if _display_body(match.group()) is None:
+            continue
+        found = True
+        prefix = sentences(text[start:match.start()])
+        for unit in prefix[:-1]:
+            result.append(Unit(start + unit.start, start + unit.end, unit.text))
+        begin = start + prefix[-1].start if prefix else match.start()
+        result.append(_unit(text, begin, match.end(), 'display'))
+        start = match.end()
+    for unit in sentences(text[start:]):
+        result.append(Unit(start + unit.start, start + unit.end, unit.text))
+    # Code, tables and standalone environments still need richer alignment.
+    prose = _PROTECTED.sub(' ', text)
+    if re.search(r'^\s*\|', prose, re.M) or any(
+        m.group().startswith(('`', '~', '\\begin{'))
+        for m in _PROTECTED.finditer(text)
+    ):
+        return []
+    return result if found else []
+
+
 def _anchors(text):
     # PDF indices and their reconstructed TeX use different letter counts.
     # Compare ordinary preserved terms, not single letters from commands/indices.
@@ -117,6 +151,13 @@ def _aligned(source, target):
     right = _anchors(' '.join(x.text for x in target))
     shared = set(left) & set(right)
     for a, b in zip(source, target):
+        if a.kind == 'display':
+            # Models commonly change \\[...\\] to $$...$$. Require identical
+            # formula bodies and order, but return the stored target verbatim.
+            bodies = lambda text: [_display_body(m.group()) for m in _PROTECTED.finditer(text)
+                                   if _display_body(m.group()) is not None]
+            if bodies(a.text) != bodies(b.text):
+                return False
         aa, bb = _anchors(a.text), _anchors(b.text)
         if any(aa[key] != bb[key] for key in shared):
             return False
@@ -150,6 +191,9 @@ def extract(source, translation, selection):
         return None
     if query == full:
         return translation.strip()
+    result = _extract(query, _display_units(source), _display_units(translation), translation)
+    if result:
+        return result
     aa, bb = paragraphs(source), paragraphs(translation)
     result = _extract(query, aa, bb, translation)
     if result:

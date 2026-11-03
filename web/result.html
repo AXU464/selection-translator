@@ -15,6 +15,7 @@
 <body>
 <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+  <symbol id="i-find" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></symbol>
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
   <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
@@ -36,6 +37,7 @@
     <svg class="icon grip" aria-hidden="true"><use href="#i-grip"/></svg>
   </div>
   <div class="controls" role="toolbar" aria-label="卡片操作">
+    <button class="icon-button" id="btn-find" title="搜索当前译文 (Ctrl+F)" aria-label="搜索当前译文" aria-controls="find-bar" aria-expanded="false"><svg class="icon"><use href="#i-find"/></svg></button>
     <button class="icon-button" id="btn-copy" title="复制译文 (Markdown)" aria-label="复制译文" disabled><svg class="icon"><use href="#i-copy"/></svg></button>
     <span class="control-divider"></span>
     <button class="icon-button" id="btn-shrink" title="缩小卡片" aria-label="缩小卡片"><svg class="icon"><use href="#i-minus"/></svg></button>
@@ -45,6 +47,20 @@
   </div>
 </header>
 <div id="progress" aria-hidden="true"></div>
+<section id="find-bar" class="find-bar" aria-label="搜索当前译文" hidden>
+  <div class="find-row">
+    <input id="find-query" type="search" placeholder="搜索当前译文…" aria-label="搜索当前译文" autocomplete="off" spellcheck="false">
+    <output id="find-count" role="status" aria-live="polite"></output>
+    <button id="find-prev" class="icon-button" title="上一处 (Shift+Enter)" aria-label="上一处">↑</button>
+    <button id="find-next" class="icon-button" title="下一处 (Enter)" aria-label="下一处">↓</button>
+    <button id="find-close" class="icon-button" title="关闭搜索 (Esc)" aria-label="关闭搜索"><svg class="icon"><use href="#i-close"/></svg></button>
+  </div>
+  <div class="find-options">
+    <label><input id="find-case" type="checkbox">区分大小写</label>
+    <label><input id="find-word" type="checkbox">全词匹配</label>
+    <span>默认忽略大小写 · 公式可输入 LaTeX</span>
+  </div>
+</section>
 <main id="reading" tabindex="0" aria-label="翻译内容">
   <div class="wrap">
     <div class="error" id="error" role="alert" hidden>
@@ -106,6 +122,7 @@
 <div class="resize-edge" data-edge="se" aria-hidden="true" title="拖动调整卡片大小"></div>
 
 <script src="formula-editor.js"></script>
+<script src="document-search.js"></script>
 <script>
 (function () {
   "use strict";
@@ -426,7 +443,7 @@
     const header = document.querySelector("header");
     if (!wrap || !header || state.toolsOpen) return;
     const needed = Math.ceil(header.getBoundingClientRect().height
-      + wrap.scrollHeight + 4);
+      + $('find-bar').getBoundingClientRect().height + wrap.scrollHeight + 4);
     if (needed > 60) callApi("fit", String(needed));
   }
 
@@ -464,6 +481,7 @@
 
   function updateOriginalPanel() {
     const visible = state.showOriginal && !!state.original;
+    if(visible)DocumentSearch.close(false);
     els.originalPanel.hidden = !visible;
     els.doc.hidden = visible;
     els.originalLen.textContent = "(" + state.original.replace(/\s+/g, "").length.toLocaleString() + " 字)";
@@ -498,6 +516,7 @@
     els.backdrop.hidden = !open;
     els.btnMore.setAttribute("aria-expanded", String(open));
     els.reading.inert = open;
+    $('find-bar').inert = open;
     document.querySelector("header").inert = open;
     if (open) $("btn-dismiss-tools").focus({ preventScroll: true });
     else if (restoreFocus) els.btnMore.focus({ preventScroll: true });
@@ -655,6 +674,7 @@
   };
 
   // ---------------------------------------------------------------- events
+  DocumentSearch.init({openView:()=>{setToolsOpen(false,false);window.__app.showOriginal(false);},resize:reportPreferredHeight});
   new ResizeObserver(updateMathOverflow).observe(els.reading);
   document.fonts.ready.then(updateMathOverflow);
   document.fonts.addEventListener("loadingdone", updateMathOverflow);

@@ -530,8 +530,9 @@ class InputHooks:
     the focused application.
     """
 
-    def __init__(self, callback, hotkeys: dict[str, str] | None = None):
+    def __init__(self, callback, hotkeys: dict[str, str] | None = None, result_focused=None):
         self._callback = callback
+        self._result_focused = result_focused
         self._hotkeys: dict[str, tuple[int, frozenset[str]]] = {}
         for name, spec in (hotkeys or {}).items():
             parsed = parse_hotkey(spec)
@@ -791,6 +792,10 @@ class InputHooks:
                     mods.add("win")
             elif async_key_down(mod_vk):
                 mods.add(name)
+        # The result card owns Ctrl+F while focused, even if a translation
+        # shortcut was configured with the same key. Other apps keep theirs.
+        if vk == ord('F') and mods == {'ctrl'} and self._result_focused and self._result_focused():
+            return None
         for name, (hotkey_vk, required) in self._hotkeys.items():
             if vk == hotkey_vk and required <= mods:
                 return name

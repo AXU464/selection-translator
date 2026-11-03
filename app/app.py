@@ -44,6 +44,7 @@ class Application:
             cfg, self._emit,
             popup_state=self.ui.popup_state,
             own_point=self.ui.owns_point,
+            result_focused=self.ui.result_focused,
         )
         self.tray = Tray(cfg, self._emit, self.icon_path)
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="translate")

@@ -48,11 +48,12 @@ class SelectionCapture:
     (the app pushes the payload onto its event queue).
     """
 
-    def __init__(self, cfg, emit, popup_state=None, own_point=None):
+    def __init__(self, cfg, emit, popup_state=None, own_point=None, result_focused=None):
         self.cfg = cfg
         self._emit = emit
         self._popup_state = popup_state      # () -> (visible: bool, bounds: tuple | None)
         self._own_point = own_point          # (physical point) -> bool
+        self._result_focused = result_focused
         self._queue: queue.Queue[CaptureRequest | None] = queue.Queue(maxsize=8)
         self._worker: threading.Thread | None = None
         self._hooks: winapi.InputHooks | None = None
@@ -76,7 +77,7 @@ class SelectionCapture:
     def start(self) -> bool:
         self._worker = threading.Thread(target=self._worker_loop, name="capture", daemon=True)
         self._worker.start()
-        self._hooks = winapi.InputHooks(self._on_hook, self.hotkey_specs())
+        self._hooks = winapi.InputHooks(self._on_hook, self.hotkey_specs(), self._result_focused)
         ok = self._hooks.start()
         self._hooks.pause(not self.enabled)
         return ok
@@ -96,7 +97,7 @@ class SelectionCapture:
         if not self._hooks:
             return
         self._hooks.stop()
-        self._hooks = winapi.InputHooks(self._on_hook, self.hotkey_specs())
+        self._hooks = winapi.InputHooks(self._on_hook, self.hotkey_specs(), self._result_focused)
         self._hooks.start()
         self._hooks.pause(not self.enabled)
 

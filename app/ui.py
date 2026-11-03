@@ -581,6 +581,10 @@ class UiController:
                 continue
         return rects
 
+    def result_focused(self) -> bool:
+        """Read cached handles from the hook thread without touching WebView UI."""
+        return bool(self._result_hwnd and winapi.root_window(winapi.foreground_window()) == self._result_hwnd)
+
     def owns_point(self, point: tuple[int, int]) -> bool:
         """True when the given physical screen point is covered by our own UI.
 

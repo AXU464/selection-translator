@@ -99,7 +99,8 @@ class TranslationCache:
                     self._trim(db, limit)
                     rows = db.execute(
                         'SELECT r.source, t.value FROM reuse_sources r JOIN translations t ON t.key=r.key '
-                        'WHERE r.scope=? AND instr(r.normalized, ?)>0 '
+                        'WHERE r.scope=? AND instr(replace(replace(r.normalized, char(13)||char(10), '
+                        'char(10)), char(13), char(10)), ?)>0 '
                         'ORDER BY length(r.normalized), t.used DESC LIMIT 64',
                         (scope, normalize(selection))).fetchall()
                 result = []

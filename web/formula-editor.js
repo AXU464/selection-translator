@@ -5,6 +5,16 @@
   menu.setAttribute('role','dialog');menu.setAttribute('aria-label','修改公式写法');document.body.append(menu);
   const api=()=>window.pywebview?.api;
   const render=(tex,display=false)=>katex.renderToString(tex,{displayMode:display,throwOnError:true,trust:false,strict:false,output:'htmlAndMathml'});
+  function clearRelated() {
+    context?.el.querySelectorAll('.formula-related').forEach(node=>node.classList.remove('formula-related'));
+  }
+  function showRelated(ctx,u) {
+    clearRelated();
+    if(context!==ctx)return;
+    for(const other of ctx.units.values()) {
+      if(other.matchKey===u.matchKey&&other.node.isConnected)other.node.classList.add('formula-related');
+    }
+  }
   function close(focus=false) {menu.hidden=true;menu.replaceChildren();if(focus&&menuTarget?.isConnected)menuTarget.focus({preventScroll:true});menuTarget=null;}
   function placement(node) {
     const r=node.getBoundingClientRect(), reading=document.getElementById('reading').getBoundingClientRect();
@@ -97,6 +107,7 @@
   }
   function score(unit,id){return 4*(preferences.content[unit.content]?.[id]||0)+.35*(preferences.structure[unit.structure]?.[id]||0);}
   function rebuild(ctx,part,changed=null){
+    clearRelated();
     const members=[...ctx.units.values()].filter(u=>u.part===part).sort((a,b)=>a.offset-b.offset);
     const whole=members.length===1&&members[0].offset===0&&members[0].end===members[0].partTemplate.length;
     const template=members[0]?.partTemplate||part.tex;
@@ -143,16 +154,26 @@
   }
   function enable(ctx,u,node){
     node.dataset.formulaOffset=u.offset;node.dataset.formulaTemplate=u.template;
-    node.classList.add('formula-editable');node.tabIndex=0;node.title='右键修改公式';node.setAttribute('aria-label','公式，右键修改公式');
-    node.addEventListener('contextmenu',ev=>{ev.preventDefault();ev.stopPropagation();open(ctx,u);});
-    node.addEventListener('keydown',ev=>{if(ev.key==='Enter'||(ev.shiftKey&&ev.key==='F10')){ev.preventDefault();ev.stopPropagation();open(ctx,u);}});
+    node.dataset.formulaTex=u.tex;
+    const identity=document.createElement('span');identity.innerHTML=render(u.tex);
+    identity.querySelectorAll('annotation').forEach(n=>n.remove());
+    u.matchKey=identity.querySelector('math').innerHTML;
+    node.classList.add('formula-editable');node.tabIndex=0;node.title='悬浮查看相同符号，右键仅修改此处';node.setAttribute('aria-label','公式，悬浮查看相同符号，右键仅修改此处');
+    // Whole-formula nodes survive rebuilds. Assign handlers to avoid duplicates.
+    node.oncontextmenu=ev=>{ev.preventDefault();ev.stopPropagation();open(ctx,u);};
+    node.onkeydown=ev=>{if(ev.key==='Enter'||(ev.shiftKey&&ev.key==='F10')){ev.preventDefault();ev.stopPropagation();open(ctx,u);}};
+    node.onpointerenter=()=>showRelated(ctx,u);
+    node.onpointerleave=clearRelated;
+    node.onfocus=()=>showRelated(ctx,u);
+    node.onblur=clearRelated;
   }
   window.FormulaEditor={
-    reset(){++session;close();context=null;},
+    reset(){++session;clearRelated();close();context=null;},
+    close(){clearRelated();close();},
     flush(){return sync;},
     endObservation(){if(context)for(const u of context.units.values())u.corrected=[];},
     async attach(el,source,parts,entry,reviewed,update,notice,overflow,savedUnits=[]){
-      const current=++session;close();context=null;
+      const current=++session;clearRelated();close();context=null;
       try{preferences=await api()?.formula_preferences?.()||{content:{},structure:{},epoch:0};}catch(_){preferences={content:{},structure:{},epoch:0};}
       if(current!==session)return;
       const ctx=context={el,source,parts,entry,update,notice,overflow,saved:source,changes:new Map(),units:new Map()};
@@ -190,6 +211,7 @@
   document.addEventListener('pointerdown',e=>{if(!menu.hidden&&!menu.contains(e.target))close();});
   document.getElementById('reading').addEventListener('scroll',()=>close(),{passive:true});
   window.addEventListener('resize',()=>close());
+  window.addEventListener('blur',clearRelated);
   document.addEventListener('keydown',e=>{
     if(menu.hidden)return;
     if(e.key==='Escape'){e.preventDefault();e.stopImmediatePropagation();close(true);}
