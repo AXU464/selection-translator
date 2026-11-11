@@ -21,18 +21,18 @@ LABELS = {"history.max_entries": "历史条数", "cache.max_entries": "缓存条
           "api.timeout_seconds": "超时时间", "api.retries": "重试次数", "behavior.max_chars": "选区字符上限",
           "behavior.auto_dismiss_seconds": "按钮自动收起时间"}
 BOOLEANS = {
-    "cache.enabled",
+    "cache.enabled", "api.use_default_temperature",
     "ui.result_on_top", "ui.fit_to_content", "ui.result_in_taskbar", "api.stream", "api.thinking",
     "behavior.detect_selection", "behavior.double_click_select", "behavior.restore_clipboard",
     "behavior.hotkey_enabled",
 }
-STRINGS = {"ui.theme", "api.model", "api.base_url", "api.extra_instructions",
+STRINGS = {"ui.theme", "api.model", "api.provider", "api.protocol", "api.base_url", "api.extra_instructions",
            "behavior.hotkey_chinese", "behavior.hotkey_english"}
 KEYS = set(NUMBERS) | BOOLEANS | STRINGS
 
 
 def connection_values(values, cfg):
-    if not isinstance(values, dict) or set(values) - {"api.api_key", "api.base_url"}:
+    if not isinstance(values, dict) or set(values) - {"api.api_key", "api.base_url", "api.provider", "api.protocol", "api.model"}:
         raise ValueError("连接参数无效，请重新打开设置。")
     key = values.get("api.api_key", "")
     base = values.get("api.base_url", cfg.get("api.base_url", ""))
@@ -51,7 +51,11 @@ def connection_values(values, cfg):
         valid = False
     if not valid:
         raise ValueError("请填写完整的 HTTP/HTTPS API 地址，不包含用户名、密码或查询参数。")
-    return {"api.api_key": key, "api.base_url": base.strip().rstrip("/")}
+    options = {name: values.get(name, cfg.get(name, 'auto')) for name in ('api.provider', 'api.protocol')}
+    if options['api.provider'] not in {'auto', 'deepseek', 'openai', 'anthropic', 'compatible'} or options['api.protocol'] not in {'auto', 'chat_completions', 'responses', 'anthropic'}:
+        raise ValueError('请选择有效的服务和接口类型。')
+    return {"api.api_key": key, "api.base_url": base.strip().rstrip("/"), **options,
+            'api.model': values.get('api.model', cfg.get('api.model', ''))}
 
 
 def snapshot(cfg) -> dict:
@@ -81,6 +85,10 @@ def validate(changes: dict, cfg) -> dict:
                 raise ValueError("输入内容过长。")
             if key == "api.api_key" and not value:
                 continue  # empty password field always preserves the stored key
+            if key == "api.provider" and value not in {'auto', 'deepseek', 'openai', 'anthropic', 'compatible'}:
+                raise ValueError("请选择有效的服务类型。")
+            if key == 'api.protocol' and value not in {'auto', 'chat_completions', 'responses', 'anthropic'}:
+                raise ValueError('请选择有效的接口类型。')
             if key == "ui.theme" and value not in THEMES:
                 raise ValueError("请选择列表中的主题。")
             if key == "api.model" and (not value or any(c.isspace() for c in value)):

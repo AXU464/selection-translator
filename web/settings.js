@@ -3,6 +3,30 @@
   const fields = [...document.querySelectorAll('[data-key]')];
   let original = {}, theme = 'system', loaded = false, busy = false, generation = 0;
   let previews = Promise.resolve();
+  let profileId = null, newProfile = false;
+  async function editProfile(id, fresh = false) {
+    if (busy) return;
+    const dirty = fields.some(el => (el.type === 'checkbox' ? el.checked :
+      ['range','number'].includes(el.type) ? Number(el.value) : el.value) !== original[el.dataset.key]) || $('api-key').value;
+    if (dirty && !confirm('放弃当前未保存的表单，切换模型配置？')) {
+      $('model-profile').value = newProfile ? '__new__' : profileId;
+      return;
+    }
+    const current = ++generation;
+    loaded = false; $('save').disabled = true;
+    try {
+      const data = await api().read(id, fresh);
+      if (current !== generation) return;
+      fill(data); profileId = fresh ? null : id; newProfile = fresh;
+      if (fresh) $('model-profile').add(new Option('新模型（未保存）', '__new__'));
+      $('model-profile').value = fresh ? '__new__' : id;
+      ++connectionRevision; $('connection-status').textContent = '';
+      loaded = true; status(fresh ? '填写新模型配置后保存' : '正在编辑所选模型 · 保存后启用');
+    } catch (_) { status('读取模型配置失败，请重新打开设置。', true); }
+    finally { $('save').disabled = !loaded; }
+  }
+  $('model-profile').addEventListener('change', () => editProfile($('model-profile').value));
+  $('add-model').addEventListener('click', () => editProfile(null, true));
   const api = () => window.pywebview.api;
   async function storageUsage(){
     try{const s=await api().storage_usage();const mb=n=>(n/1048576).toFixed(1)+' MB';$('storage-usage').textContent=`自动数据 ${mb(s.total)} / ${mb(s.limit)}。导出文件 ${mb(s.exports)}，请手动清理。`+(s.error||'');}
@@ -28,7 +52,7 @@
       input.setAttribute('aria-describedby', hint.id);
     }
   }
-  for (const field of [$('api-key'), document.querySelector('[data-key="api.base_url"]')]) {
+  for (const field of [$('api-key'), $('base-url'), $('api-provider'), $('api-protocol'), $('api-model')]) {
     field.addEventListener('input', () => { ++connectionRevision; $('connection-status').textContent = ''; });
   }
   $('test-connection').addEventListener('click', async () => {
@@ -38,10 +62,11 @@
     $('connection-status').textContent = '正在检查当前表单中的连接…';
     try {
       const result = await api().test_connection({'api.api_key': $('api-key').value,
-        'api.base_url': document.querySelector('[data-key="api.base_url"]').value});
+        'api.base_url': $('base-url').value, 'api.provider': $('api-provider').value,
+        'api.protocol': $('api-protocol').value, 'api.model': $('api-model').value}, profileId, newProfile);
       if (current !== generation || revision !== connectionRevision) return;
       $('connection-status').textContent = result.ok
-        ? `连接正常 · ${result.elapsed} 秒。` + (result.models.length ? `可用模型：${result.models.join('、')}` : '服务未列出可用模型。') + '（模型列表测试，不检查余额。）'
+        ? `连接正常 · ${result.elapsed} 秒。` + (result.models.length ? `可用模型：${result.models.join('、')}` : '服务未列出可用模型。') + '（仅验证模型列表，不验证翻译参数或余额。）'
         : result.error;
       $('connection-status').classList.toggle('error', !result.ok);
     } catch (_) { if (current === generation) $('connection-status').textContent = '连接测试未完成，请重试。'; }
@@ -102,9 +127,17 @@
   }
   const catalog = buildThemes();
   function clearSecrets() { $('api-key').value=''; $('api-key').type='password'; $('toggle-key').textContent='显示'; $('toggle-key').setAttribute('aria-pressed','false'); }
+  function temperatureState() {
+    $('temperature').disabled = $('default-temperature').checked;
+  }
+  $('default-temperature').addEventListener('change', temperatureState);
   function fill(data) {
     original = data.values;
+    profileId = data.profiles.active; newProfile = false;
+    $('model-profile').replaceChildren(...data.profiles.items.map(p => new Option(p.label, p.id)));
+    $('model-profile').value = profileId;
     fields.forEach(el => { const value=original[el.dataset.key]; if(el.type==='checkbox') el.checked=!!value; else el.value=value ?? ''; });
+    temperatureState();
     theme = original['ui.theme'] || 'system';
     clearSecrets();
     $('key-state').textContent = data.hasApiKey ? '已配置' : '未配置';
@@ -139,11 +172,12 @@
     const values={'ui.theme':theme};
     fields.forEach(el=>values[el.dataset.key]=el.type==='checkbox'?el.checked:(['range','number'].includes(el.type)?Number(el.value):el.value));
     const changes=Object.fromEntries(Object.entries(values).filter(([key,value])=>value!==original[key]));
+    if (newProfile) for (const [key, value] of Object.entries(values)) if (key.startsWith('api.')) changes[key] = value;
     if($('api-key').value.trim()) changes['api.api_key']=$('api-key').value.trim();
     busy=true; $('save').disabled=true; $('cancel').disabled=true; status('正在保存…');
     try {
       await previews;
-      const result=await api().save(changes);
+      const result=await api().save(changes, profileId, newProfile);
       if(!result.ok) { status(result.error || '保存失败，请重试。',true); return; }
       fill(result); status('已保存 · 所有设置已生效');
     } catch (_) { status('保存未完成，请重试。',true); }

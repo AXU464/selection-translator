@@ -21,6 +21,7 @@ from .chinese import normalize_translation
 from .reuse import find_reuse
 from .quality import untranslated_words, retry_review
 from .config import ROOT, DEFAULTS
+from . import api_protocols
 
 log = logging.getLogger(__name__)
 
@@ -183,10 +184,7 @@ class Translator:
 
     # -- configuration --------------------------------------------------
     def _endpoint(self) -> str:
-        base = str(self.cfg.get("api.base_url") or "https://api.deepseek.com").strip().rstrip("/")
-        if base.endswith("/chat/completions"):
-            return base
-        return f"{base}/chat/completions"
+        return api_protocols.endpoint(self.cfg)
 
     @property
     def model(self) -> str:
@@ -196,11 +194,7 @@ class Translator:
         key = self.cfg.api_key
         if not key:
             raise ApiError("尚未配置 API Key，请在「更多 → 设置 → 翻译服务」中填写。")
-        return {
-            "Authorization": f"Bearer {key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
+        return api_protocols.headers(key, api_protocols.protocol(self.cfg))
 
     def _body(self, text: str, target: str, stream: bool, include_usage: bool = True, cfg=None) -> dict:
         cfg = cfg or self.cfg
@@ -219,24 +213,23 @@ class Translator:
                 # separate; it is not a sandbox or a guarantee about model output.
                 {"role": "user", "content": json.dumps({"source_text": document.text}, ensure_ascii=False)},
             ],
-            "temperature": float(cfg.get("api.temperature", 0.2)),
             "max_tokens": int(cfg.get("api.max_tokens", 16000)),
             "stream": bool(stream),
         }
-        if not bool(cfg.get("api.thinking", False)):
-            # DeepSeek-V4 accepts an explicit "no thinking" switch; translation
-            # does not need chain-of-thought and this is roughly twice as fast.
-            body["thinking"] = {"type": "disabled"}
+        if not cfg.get('api.use_default_temperature', True):
+            body['temperature'] = float(cfg.get('api.temperature', 0.2))
+        provider = api_protocols.provider(cfg)
+        if provider == 'deepseek':
+            body['thinking'] = {'type': 'enabled' if cfg.get('api.thinking', False) else 'disabled'}
+        elif provider == 'openai':
+            body['max_completion_tokens'] = body.pop('max_tokens')
         if stream and include_usage:
             body["stream_options"] = {"include_usage": True}
         return body
 
     # -- api calls ------------------------------------------------------
     def list_models(self, timeout=30) -> list[str]:
-        base = str(self.cfg.get("api.base_url") or "https://api.deepseek.com").strip().rstrip("/")
-        if base.endswith("/chat/completions"):
-            base = base[: -len("/chat/completions")]
-        url = f"{base}/models"
+        url = api_protocols.endpoint(self.cfg, models=True)
         try:
             resp = self.session.get(url, headers=self._headers(), timeout=timeout,
                                     allow_redirects=False, stream=True)
@@ -283,7 +276,7 @@ class Translator:
 
     def translate(self, text: str, target: str, on_delta=None,
                   cancel: threading.Event | None = None, *, bypass_cache=False,
-                  previous_translation="", retry_reason="") -> TranslationResult:
+                  previous_translation="", retry_reason="", api_values=None) -> TranslationResult:
         if cancel is not None and cancel.is_set():
             return TranslationResult(cancelled=True)
         # Keep direct callers (e.g. scripts) behind the same no-network gate.
@@ -291,21 +284,28 @@ class Translator:
             return TranslationResult(text=SAME_LANGUAGE_MESSAGE, model=LOCAL_MODEL_LABEL)
         # Freeze every request input so a settings save mid-stream cannot poison the key.
         from types import SimpleNamespace
-        values = {f'api.{key}': self.cfg.get(f'api.{key}', default) for key, default in DEFAULTS['api'].items()}
+        if api_values is None and hasattr(self.cfg, 'as_dict'):
+            api_values = self.cfg.as_dict().get('api', {})
+        values = {f'api.{key}': (api_values.get(key, default) if api_values is not None
+                               else self.cfg.get(f'api.{key}', default))
+                  for key, default in DEFAULTS['api'].items()}
         frozen = SimpleNamespace(get=lambda key, default=None: values.get(key, default))
         stream = bool(frozen.get('api.stream', True))
         body = self._body(text, target, stream, cfg=frozen)
-        base = str(frozen.get('api.base_url') or 'https://api.deepseek.com').strip().rstrip('/')
-        endpoint = base if base.endswith('/chat/completions') else base + '/chat/completions'
-        key_material = {'version': 1, 'source': text, 'target': target, 'endpoint': endpoint, 'body': body,
+        kind = api_protocols.protocol(frozen)
+        endpoint = api_protocols.endpoint(frozen)
+        key_material = {'version': 1, 'source': text, 'target': target, 'endpoint': endpoint,
+                        'body': api_protocols.wire_body(body, kind),
                         'credential': hashlib.sha256(str(frozen.get('api.api_key', '')).encode()).hexdigest()}
         cache_key = hashlib.sha256(json.dumps(key_material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         # Fingerprint request policy without the selection or PDF-layout hint.
         # A contained selection may have fewer layout artifacts than its parent.
         scope_material = copy.deepcopy(key_material)
         scope_material.pop('source')
-        scope_material['body']['messages'] = [{'role':'system', 'content':build_system_prompt(
+        scope_body = copy.deepcopy(body)
+        scope_body['messages'] = [{'role': 'system', 'content': build_system_prompt(
             target, frozen.get('api.extra_instructions', ''))}]
+        scope_material['body'] = api_protocols.wire_body(scope_body, kind)
         scope = hashlib.sha256(json.dumps(scope_material, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         enabled = bool(self.cfg.get('cache.enabled', True))
         try:
@@ -358,8 +358,8 @@ class Translator:
             body['messages'][1]['content'] = json.dumps(job, ensure_ascii=False)
         if not key:
             raise ApiError("尚未配置 API Key，请在「更多 → 设置 → 翻译服务」中填写。")
-        request = {'body': body, 'endpoint': endpoint, 'headers': {'Authorization': 'Bearer ' + key,
-                   'Content-Type': 'application/json', 'Accept': 'application/json'},
+        request = {'body': api_protocols.wire_body(body, kind), 'protocol': kind,
+                   'endpoint': endpoint, 'headers': api_protocols.headers(key, kind),
                    'timeout': float(frozen.get('api.timeout_seconds', 120))}
         attempts = 1 + max(0, int(frozen.get("api.retries", 1)))
         last: ApiError | None = None
@@ -386,9 +386,11 @@ class Translator:
         stream = bool(request['body']['stream']) if request else bool(self.cfg.get("api.stream", True))
         timeout = request['timeout'] if request else float(self.cfg.get("api.timeout_seconds", 120))
         include_usage = True
+        kind = request.get('protocol', 'chat_completions') if request else api_protocols.protocol(self.cfg)
 
         for attempt in (0, 1):
-            body = copy.deepcopy(request['body']) if request else self._body(text, target, stream, include_usage)
+            body = (copy.deepcopy(request['body']) if request else
+                    api_protocols.wire_body(self._body(text, target, stream, include_usage), kind))
             if not include_usage:
                 body.pop('stream_options', None)
             started = time.monotonic()
@@ -409,10 +411,10 @@ class Translator:
             except requests.Timeout as exc:
                 raise _Retryable("请求超时，请稍后重试。", produced=False, detail=str(exc)) from exc
             except requests.RequestException as exc:
-                raise _Retryable("网络错误，无法连接 DeepSeek API。", produced=False, detail=str(exc)) from exc
+                raise _Retryable("网络错误，无法连接翻译服务 API。", produced=False, detail=str(exc)) from exc
 
             with resp:
-                if resp.status_code == 400 and include_usage and stream:
+                if kind == 'chat_completions' and resp.status_code == 400 and include_usage and stream:
                     detail = self._detail(resp)
                     if "stream_options" in detail.lower():
                         include_usage = False
@@ -420,7 +422,9 @@ class Translator:
                         continue
                 if resp.status_code != 200:
                     raise self._error_for(resp)
-                if stream:
+                if kind != 'chat_completions':
+                    result = self._consume_protocol(resp, started, on_delta, cancel, kind, stream)
+                elif stream:
                     result = self._consume_stream(resp, started, on_delta, cancel)
                 else:
                     result = self._consume_json(resp, started)
@@ -428,6 +432,82 @@ class Translator:
             return result
 
         raise ApiError("请求失败，请检查 API 配置。")
+
+    def _consume_protocol(self, resp, started, on_delta, cancel, kind, stream):
+        result = TranslationResult(cacheable=False)
+        chunks = []
+        complete = False
+        stopped = False
+
+        def merge(data):
+            result.model = data.get('model') or result.model
+            result.usage.merge(api_protocols.usage(data.get('usage')))
+
+        try:
+            if not stream:
+                data = resp.json()
+                if not isinstance(data, dict) or data.get('error'):
+                    raise ApiError('翻译服务返回错误。', detail=str(data.get('error', ''))[:400] if isinstance(data, dict) else '')
+                if kind == 'responses' and data.get('status') in ('failed', 'cancelled'):
+                    raise ApiError('翻译服务未完成响应。', detail=str(data.get('error') or data.get('status'))[:400])
+                merge(data)
+                chunks.append(api_protocols.response_text(data, kind))
+                complete = (data.get('stop_reason') == 'end_turn' if kind == 'anthropic'
+                            else data.get('status') == 'completed')
+            else:
+                for payload in api_protocols.sse_events(resp):
+                    if cancel is not None and cancel.is_set():
+                        result.cancelled = True
+                        break
+                    if payload == '[DONE]':
+                        break
+                    data = json.loads(payload)
+                    event = data.get('type', '')
+                    if data.get('error') or event in ('error', 'response.failed'):
+                        raise ApiError('翻译服务返回错误。', detail=str(data.get('error') or data.get('response', {}).get('error') or event)[:400])
+                    piece = ''
+                    if kind == 'responses':
+                        if event == 'response.output_text.delta':
+                            piece = data.get('delta', '')
+                        elif event in ('response.completed', 'response.incomplete'):
+                            response = data.get('response', {})
+                            merge(response)
+                            complete = event == 'response.completed' and response.get('status') == 'completed'
+                            if not chunks:
+                                chunks.append(api_protocols.response_text(response, kind))
+                            break
+                    else:
+                        if event == 'message_start':
+                            merge(data.get('message', {}))
+                        elif event == 'content_block_start':
+                            block = data.get('content_block', {})
+                            if block.get('type') == 'text':
+                                piece = block.get('text', '')
+                        elif event == 'content_block_delta':
+                            delta = data.get('delta', {})
+                            if delta.get('type') == 'text_delta':
+                                piece = delta.get('text', '')
+                        elif event == 'message_delta':
+                            merge(data)
+                            stopped = data.get('delta', {}).get('stop_reason') == 'end_turn'
+                        elif event == 'message_stop':
+                            complete = stopped
+                            break
+                    if piece:
+                        chunks.append(piece)
+                        if on_delta is not None:
+                            on_delta(''.join(chunks))
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ApiError('无法解析服务端响应，请检查接口类型。') from exc
+        except requests.RequestException as exc:
+            raise _Retryable('读取响应时网络中断。', produced=bool(chunks), detail=str(exc)) from exc
+        result.text = ''.join(chunks).strip()
+        result.cacheable = complete and not result.cancelled
+        result.elapsed = time.monotonic() - started
+        result.usage.total_tokens = result.usage.prompt_tokens + result.usage.completion_tokens
+        if not result.text and not result.cancelled:
+            raise ApiError('模型没有返回可用的译文，请检查模型权限和输出上限。')
+        return result
 
     def _consume_stream(self, resp, started: float, on_delta,
                         cancel: threading.Event | None) -> TranslationResult:

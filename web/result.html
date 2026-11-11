@@ -16,8 +16,9 @@
 <svg class="symbols" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><defs>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
   <symbol id="i-find" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></symbol>
-  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
-  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-grow" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6M7 10h6M10 7v6"/></symbol>
+  <symbol id="i-shrink" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6M7 10h6"/></symbol>
+  <symbol id="i-minimize" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="m10 5-7 7 7 7M3 12h18"/></symbol>
@@ -40,13 +41,15 @@
     <button class="icon-button" id="btn-find" title="搜索当前译文 (Ctrl+F)" aria-label="搜索当前译文" aria-controls="find-bar" aria-expanded="false"><svg class="icon"><use href="#i-find"/></svg></button>
     <button class="icon-button" id="btn-copy" title="复制译文 (Markdown)" aria-label="复制译文" disabled><svg class="icon"><use href="#i-copy"/></svg></button>
     <span class="control-divider"></span>
-    <button class="icon-button" id="btn-shrink" title="缩小卡片" aria-label="缩小卡片"><svg class="icon"><use href="#i-minus"/></svg></button>
-    <button class="icon-button" id="btn-grow" title="放大卡片" aria-label="放大卡片"><svg class="icon"><use href="#i-plus"/></svg></button>
+    <button class="icon-button" id="btn-shrink" title="缩小卡片" aria-label="缩小卡片"><svg class="icon"><use href="#i-shrink"/></svg></button>
+    <button class="icon-button" id="btn-grow" title="放大卡片" aria-label="放大卡片"><svg class="icon"><use href="#i-grow"/></svg></button>
     <button class="icon-button" id="btn-more" title="更多功能" aria-label="更多功能" aria-haspopup="dialog" aria-controls="tools-panel" aria-expanded="false"><svg class="icon"><use href="#i-more"/></svg></button>
+    <button class="icon-button" id="btn-minimize" title="最小化到任务栏（点击任务栏按钮恢复）" aria-label="最小化卡片"><svg class="icon"><use href="#i-minimize"/></svg></button>
     <button class="icon-button" id="btn-close" title="收起卡片，保留托盘运行" aria-label="收起卡片"><svg class="icon"><use href="#i-close"/></svg></button>
   </div>
 </header>
 <div id="progress" aria-hidden="true"></div>
+<div class="model-bar"><label for="active-model">翻译模型</label><select id="active-model" aria-label="切换翻译模型" title="用于下一次翻译，不自动重新翻译"></select><button class="text-button" id="manage-models">配置模型</button></div>
 <section id="find-bar" class="find-bar" aria-label="搜索当前译文" hidden>
   <div class="find-row">
     <input id="find-query" type="search" placeholder="搜索当前译文…" aria-label="搜索当前译文" autocomplete="off" spellcheck="false">
@@ -162,6 +165,7 @@
     btnRetry: $("btn-retry"), btnConfig: $("btn-config"), btnLogs: $("btn-logs"),
     reading: $("reading"), tools: $("tools-panel"), backdrop: $("tools-backdrop"),
     btnMore: $("btn-more"), btnGrow: $("btn-grow"), btnShrink: $("btn-shrink"),
+    btnMinimize: $("btn-minimize"),
   };
 
   function callApi(method, arg) {
@@ -518,6 +522,7 @@
     els.reading.inert = open;
     $('find-bar').inert = open;
     document.querySelector("header").inert = open;
+    document.querySelector('.model-bar').inert = open;
     if (open) $("btn-dismiss-tools").focus({ preventScroll: true });
     else if (restoreFocus) els.btnMore.focus({ preventScroll: true });
   }
@@ -525,7 +530,7 @@
   async function controlWindow(action) {
     if(action==='close')await FormulaEditor.flush();
     if (action === "default") setToolsOpen(false);
-    const buttons = [els.btnGrow, els.btnShrink, $("btn-default-size")];
+    const buttons = [els.btnGrow, els.btnShrink, els.btnMinimize, $("btn-default-size")];
     buttons.forEach(button => button.disabled = true);
     try {
       const ok = await callApi("window_control", action);
@@ -539,6 +544,12 @@
 
   // ---------------------------------------------------------------- API
   window.__app = {
+    models(data) {
+      const select = $('active-model');
+      select.replaceChildren(...data.items.map(p => new Option(p.label, p.id)));
+      select.value = data.active;
+      select.dataset.active = data.active;
+    },
     reset(payload) {
       FormulaEditor.reset();
       const data = payload || {};
@@ -738,8 +749,22 @@
   wire(els.btnMore, () => setToolsOpen(!state.toolsOpen));
   wire($("btn-dismiss-tools"), () => setToolsOpen(false));
   wire(els.backdrop, () => setToolsOpen(false));
+  wire($('manage-models'), () => action('model-settings'));
+  $('active-model').addEventListener('change', async () => {
+    const select = $('active-model'); select.disabled = true;
+    try {
+      const result = await callApi('select_model', select.value);
+      if (!result?.ok) throw new Error(result?.error || '模型切换失败');
+      window.__app.models(result);
+      toast('模型已切换，下次翻译生效');
+    } catch (error) {
+      select.value = select.dataset.active;
+      toast(error.message || '模型切换失败，请重试');
+    } finally { select.disabled = false; }
+  });
   wire(els.btnGrow, () => controlWindow("grow"));
   wire(els.btnShrink, () => controlWindow("shrink"));
+  wire(els.btnMinimize, () => controlWindow("minimize"));
   wire($("btn-default-size"), () => controlWindow("default"));
   wire($("btn-close"), () => controlWindow("close"));
   for (const handle of [$("drag-handle"), ...document.querySelectorAll(".resize-edge")]) {

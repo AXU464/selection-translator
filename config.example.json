@@ -2,9 +2,12 @@
   "cache": {"enabled": true, "max_entries": 300},
   "history": {"max_entries": 500},
   "api": {
+    "provider": "auto",
+    "protocol": "auto",
     "base_url": "https://api.deepseek.com",
     "api_key": "PUT-YOUR-DEEPSEEK-API-KEY-HERE",
     "model": "deepseek-flash",
+    "use_default_temperature": true,
     "temperature": 0.2,
     "max_tokens": 16000,
     "thinking": false,

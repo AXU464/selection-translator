@@ -39,8 +39,9 @@ def _acquire_single_instance() -> bool:
 
 
 def main() -> int:
-    from app import winapi
+    from app import taskbar, winapi
 
+    taskbar.set_app_identity()
     winapi.enable_dpi_awareness()
 
     if not _acquire_single_instance():

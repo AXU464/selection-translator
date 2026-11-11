@@ -73,7 +73,7 @@ header {
 .chip { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .grip { margin-left: auto; color: var(--line); }
 .drag-handle:hover .grip { color: var(--accent); }
-.controls { display: flex; align-items: center; gap: 2px; }
+.controls { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .icon-button {
   border: 0; border-radius: 7px; background: transparent;
   display: inline-flex; align-items: center; justify-content: center;
@@ -81,6 +81,9 @@ header {
 }
 .icon-button:hover:not(:disabled), .icon-button[aria-expanded="true"] { background: var(--tint); color: var(--accent); }
 #btn-close:hover { background: var(--danger-bg); color: var(--danger); }
+.model-bar { display: flex; flex: none; align-items: center; gap: 7px; padding: 5px 12px; border-bottom: 1px solid var(--line); font-size: 11px; }
+.model-bar label, .model-bar button { flex: none; white-space: nowrap; }
+.model-bar select { flex: 1; min-width: 0; width: 0; }
 .control-divider { height: 13px; width: 1px; background: var(--line); margin: 0 3px; }
 #progress { position: absolute; top: 42px; left: 1px; right: 1px; height: 2px; overflow: hidden; pointer-events: none; }
 #progress::after {
@@ -194,6 +197,7 @@ footer { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; col
 .resize-edge[data-edge="se"] { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
 .resize-edge[data-edge="se"]::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; background: repeating-linear-gradient(135deg, transparent 0 2px, var(--faint) 2px 3px); clip-path: polygon(100% 0, 100% 100%, 0 100%); opacity: .6; }
 @media (max-width: 420px) { .title { display: none; } .wrap { padding: 12px 15px 18px; } header { gap: 5px; } .drag-handle { gap: 7px; } }
+@media (max-width: 360px) { .chip { display: none; } }
 @media (max-width: 330px) { .grip { display: none; } .control-divider { margin: 0 1px; } }
 @media (prefers-reduced-motion: reduce) { *, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 /* Formula choices stay in the card and preserve the surrounding document. */

@@ -107,6 +107,7 @@ class Application:
         self.ui.after_start()
         self._push_history()
         self._maybe_onboard()
+        log.info("startup complete; processing application events")
         self._loop()
 
     def _wait_for_pages(self, timeout: float = 15.0) -> None:
@@ -368,6 +369,8 @@ class Application:
                                        selection=self._current_job.get("selection"))
         elif action == "config":
             self.ui.show_settings()
+        elif action == 'model-settings':
+            self.ui.show_settings('service')
         elif action == 'history-manager':
             self.ui.show_settings('history-page')
         elif action == "logs":
@@ -433,7 +436,8 @@ class Application:
         self._last_stream_push = 0.0
 
         self.ui.set_result_title(f"译文 · {DIRECTION_LABELS[direction]}")
-        model = LOCAL_MODEL_LABEL if same_language else self.translator.model
+        api_values = self.cfg.as_dict()['api']
+        model = LOCAL_MODEL_LABEL if same_language else api_values['model']
         self.ui.set_result_loading(direction, text, entry_id, model)
         if same_language:
             # Replace the current job first, so late events from a previous
@@ -447,17 +451,18 @@ class Application:
             return
         self.ui.show_result(activate=True, scroll_top=True)
         log.info("translating %s chars into %s (origin=%s)", len(text), direction, origin)
-        self.executor.submit(self._run_job, job_id, text, direction, cancel, origin == 'retry', previous_translation, retry_reason)
+        self.executor.submit(self._run_job, job_id, text, direction, cancel, origin == 'retry', previous_translation, retry_reason, api_values)
 
     def _run_job(self, job_id: int, text: str, direction: str, cancel: threading.Event,
-                 bypass_cache=False, previous_translation='', retry_reason='') -> None:
+                 bypass_cache=False, previous_translation='', retry_reason='', api_values=None) -> None:
         if hasattr(self,'storage_budget'):self.storage_budget.enforce()
         def on_delta(accumulated: str) -> None:
             self._emit(events.JOB_STREAM, {"job_id": job_id, "text": accumulated})
 
         try:
             result = self.translator.translate(text, direction, on_delta=on_delta, cancel=cancel,
-                                               bypass_cache=bypass_cache, previous_translation=previous_translation, retry_reason=retry_reason)
+                                               bypass_cache=bypass_cache, previous_translation=previous_translation, retry_reason=retry_reason,
+                                               api_values=api_values)
         except Exception as exc:  # noqa: BLE001 - reported to the UI
             if not cancel.is_set():
                 self._emit(events.JOB_FAILED, {
@@ -477,7 +482,7 @@ class Application:
             "job_id": job_id,
             "text": result.text,
             "elapsed": result.elapsed,
-            "model": result.model or self.translator.model,
+            "model": result.model or (api_values or {}).get('model') or self.translator.model,
             "prompt_tokens": result.usage.prompt_tokens,
             "completion_tokens": result.usage.completion_tokens,
             "cached": result.cached,

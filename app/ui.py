@@ -14,9 +14,9 @@ from ctypes import wintypes
 import webview
 
 from . import config as config_mod
-from . import events, winapi
+from . import events, taskbar, winapi
 from .document import prepare_document
-from . import preferences
+from . import models, preferences
 from .translator import ConnectionProbe, Translator
 
 log = logging.getLogger(__name__)
@@ -72,6 +72,18 @@ class _ResultApi:
         self._ui.emit(events.UI_READY, {"which": "result"})
         return True
 
+    def model_choices(self):
+        return models.choices(self._ui.cfg)
+
+    def select_model(self, profile_id):
+        with self._ui._settings_lock:
+            try:
+                result = models.activate(self._ui.cfg, str(profile_id))
+                self._ui.push_models()
+                return {'ok': True, **result}
+            except (ValueError, OSError):
+                return {'ok': False, 'error': '模型切换未完成，请重新打开设置检查配置。'}
+
     def formula_preferences(self):
         store=self._ui.formula_preferences
         return store.snapshot() if store else {'content':{},'structure':{},'epoch':0}
@@ -107,8 +119,9 @@ class _SettingsApi:
     def __init__(self, ui):
         self._ui = ui
 
-    def read(self):
-        return preferences.snapshot(self._ui.cfg)
+    def read(self, profile_id=None, new=False):
+        return {**preferences.snapshot(models.view(self._ui.cfg, profile_id, new)),
+                'profiles': models.choices(self._ui.cfg)}
 
     def formula_clear(self):
         store=self._ui.formula_preferences
@@ -119,10 +132,14 @@ class _SettingsApi:
         budget=self._ui.storage_budget
         return budget.status() if budget else {'total':0,'exports':0,'limit':1073741824,'error':''}
 
-    def test_connection(self, values):
+    def test_connection(self, values, profile_id=None, new=False):
         if not self._ui._settings_open:
             return {"ok": False, "error": "请先打开设置。"}
-        return Translator.connection_probe(self._ui.cfg, values, self._ui.connection_probe)
+        try:
+            cfg = models.view(self._ui.cfg, profile_id, new)
+            return Translator.connection_probe(cfg, values, self._ui.connection_probe)
+        except ValueError as exc:
+            return {'ok': False, 'error': str(exc)}
 
     def history_list(self, keyword='', tag='', page=0):
         store = self._ui.history_store
@@ -197,20 +214,20 @@ class _SettingsApi:
             self._ui.apply_appearance(values)
             return True
 
-    def save(self, values):
+    def save(self, values, profile_id=None, new=False):
         with self._ui._settings_lock:
             if not self._ui._settings_open:
                 return {"ok": False, "error": "请重新打开设置。"}
             try:
-                cleaned = preferences.validate(values, self._ui.cfg)
-                self._ui.cfg.update_values(cleaned)
+                cleaned = preferences.validate(values, models.view(self._ui.cfg, profile_id, new))
+                models.save(self._ui.cfg, cleaned, profile_id, new)
             except ValueError as exc:
                 return {"ok": False, "error": str(exc)}
             except OSError:
                 return {"ok": False, "error": "保存失败，请检查配置文件的写入权限后重试。"}
             self._ui.apply_preferences(list(cleaned))
             self._ui.emit(events.SETTINGS_CHANGED, {"keys": list(cleaned)})
-            return {"ok": True, **preferences.snapshot(self._ui.cfg)}
+            return {"ok": True, **self.read()}
 
     def close(self):
         return self._ui.close_settings()
@@ -239,10 +256,11 @@ class UiController:
         self._popup_hwnd = 0
         self._result_hwnd = 0
         self._result_open = False
+        self._result_taskbar_temporary = False
         self._result_baseline_h = 0     # height to use for long content / geometry
         self._fit_target: int | None = None
         self._manual_size = False
-        self._geometry_lock = threading.Lock()
+        self._geometry_lock = threading.RLock()
         self._assume_closing = False   # True while we close windows on purpose
         self._lock = threading.Lock()
 
@@ -314,6 +332,7 @@ class UiController:
         )
         self._result_baseline_h = int(height)
         self.result.events.resized += self._on_result_resized
+        self.result.events.restored += self._on_result_restored
         # Both windows must be able to *cancel* their close: pywebview exits the
         # whole application as soon as one of them is actually closed.
         self.result.events.closing += self._on_result_closing
@@ -414,17 +433,27 @@ class UiController:
         """Closing the result window hides it; the app keeps running in the tray."""
         if self._assume_closing:
             return True
-        self._save_geometry()
-        was_open = self._result_open
-        try:
-            self.result.hide()
-        except Exception:
-            log.debug("hiding result window failed", exc_info=True)
-            return False
-        self._result_open = False
+        # Closing runs on the GUI thread, which must never wait for a worker
+        # holding _geometry_lock while that worker is waiting in Form.Invoke.
+        threading.Thread(target=self._hide_result, name="close-result", daemon=True).start()
+        return False
+
+    def _hide_result(self) -> bool:
+        with self._geometry_lock:
+            self._save_geometry()
+            was_open = self._result_open
+            try:
+                self.result.hide()
+            except Exception:
+                log.debug("hiding result window failed", exc_info=True)
+                return False
+            self._result_open = False
+            if self._result_taskbar_temporary:
+                self._result_taskbar_temporary = False
+                self._apply_result_styles()
         if was_open:
             self.emit(events.RESULT_CLOSED)
-        return False  # cancel the close
+        return True
 
     # ------------------------------------------------------------ helpers
     def _safe_hwnd(self, window) -> int:
@@ -472,17 +501,23 @@ class UiController:
         winapi.show_window(hwnd, False)
         self._popup_visible = False
 
-    def _apply_result_styles(self) -> None:
+    def _apply_result_styles(self) -> bool:
+        with self._geometry_lock:
+            try:
+                self._update_result_styles()
+                return True
+            except Exception:
+                log.warning("could not update result taskbar appearance", exc_info=True)
+                return False
+
+    def _update_result_styles(self) -> None:
         """Keep native shadows/rounded corners around the custom card chrome."""
-        show_taskbar = bool(self.cfg.get("ui.result_in_taskbar", False))
-        self._set_winforms_taskbar(self.result, show_taskbar)
-        self._refresh_handles()
-        if not bool(self.cfg.get("ui.result_in_taskbar", False)):
-            self._enforce_no_taskbar(self._result_hwnd)
-        elif self._result_hwnd:
-            style = winapi.user32.GetWindowLongW(self._result_hwnd, GWL_EXSTYLE)
-            winapi.user32.SetWindowLongW(self._result_hwnd, GWL_EXSTYLE,
-                                        (style | WS_EX_APPWINDOW) & ~WS_EX_TOOLWINDOW)
+        show_taskbar = self._result_taskbar_temporary or bool(self.cfg.get("ui.result_in_taskbar", False))
+        hwnd = self._refresh_result_handle()
+        if not hwnd:
+            raise RuntimeError("result window handle unavailable")
+        taskbar.configure_window(hwnd, self.icon_path)
+        taskbar.set_visible(hwnd, show_taskbar)
         try:
             # Windows 11 rounds the native surface; older Windows ignores this.
             preference = ctypes.c_int(2)  # DWMWCP_ROUND
@@ -506,7 +541,8 @@ class UiController:
             if wanted != style:
                 winapi.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, wanted)
                 winapi.user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
-                                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+                                           SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                                           | SWP_FRAMECHANGED | SWP_NOACTIVATE)
         except Exception:
             log.debug("could not enforce taskbar style", exc_info=True)
 
@@ -630,32 +666,45 @@ class UiController:
         top = max(wt, min(top, wb - POPUP_H))
 
         self._push_popup("setPreview", [preview])
-        previous = winapi.foreground_window()
         try:
-            self.popup.move(int(left), int(top))
-            self.popup.show()
+            self._show_popup_no_activate(int(left), int(top))
         except Exception:
             log.exception("showing popup failed")
             return
-        # Showing can restore WinForms' own styles; re-assert ours afterwards
-        # (also refreshes the handle in case it was recreated).
-        self._refresh_handles()
-        self._enforce_no_taskbar(self._popup_handle(), no_activate=True)
         if not self._popup_style_ok():
             log.warning("popup window styles could not be fully applied (ex=0x%08x)",
                         self._popup_exstyle())
-        # pywebview's show() calls Form.Activate(), which can pull the focus away
-        # from whatever the user is reading. Give it back straight away; the popup
-        # still receives mouse clicks without being the foreground window.
-        if previous and previous != self._popup_hwnd and winapi.is_window(previous):
-            if winapi.foreground_window() != previous:
-                winapi.set_foreground_window(previous)
         with self._lock:
             self._popup_visible = True
             self._popup_bounds = (left, top, left + POPUP_W, top + POPUP_H)
         log.info("popup shown at cursor=%s logical=(%s,%s) work=%s bounds=%s focus=%s",
                  point, left, top, work, self._popup_bounds,
                  winapi.window_title(winapi.foreground_window())[:40])
+
+    def _show_popup_no_activate(self, left: int, top: int) -> None:
+        """Position and reveal the bar without interrupting the source selection."""
+        from System import Action  # type: ignore
+
+        def show() -> None:
+            hwnd = self._popup_handle()
+            if not hwnd:
+                raise RuntimeError("popup window handle unavailable")
+            self._enforce_no_taskbar(hwnd, no_activate=True)
+            x, y = winapi.to_physical((left, top))
+            # pywebview.move() uses SWP_SHOWWINDOW without SWP_NOACTIVATE,
+            # and show() explicitly calls Form.Activate(). Restoring focus
+            # afterwards still sends blur/focus events to Electron editors.
+            if not winapi.user32.SetWindowPos(
+                wintypes.HWND(hwnd), HWND_TOP, x, y, 0, 0,
+                SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            ):
+                raise ctypes.WinError(ctypes.get_last_error())
+
+        form = self.popup.native
+        if form.InvokeRequired:
+            form.Invoke(Action(show))
+        else:
+            show()
 
     def hide_popup(self) -> None:
         with self._lock:
@@ -693,9 +742,16 @@ class UiController:
                     self._fit_target = None
                 x, y = winapi.cursor_pos()
                 win32gui.ReleaseCapture()
-                win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN,
-                                     RESIZE_HIT_TESTS[edge],
-                                     (x & 0xffff) | ((y & 0xffff) << 16))
+                position = (x & 0xffff) | ((y & 0xffff) << 16)
+                if edge == "move":
+                    win32gui.SendMessage(hwnd, win32con.WM_NCLBUTTONDOWN,
+                                         RESIZE_HIT_TESTS[edge], position)
+                else:
+                    # With WS_SYSMENU but no native frame, DefWindowProc rejects
+                    # resize hit tests. SC_SIZE starts sizing without adding a border.
+                    direction = RESIZE_HIT_TESTS[edge] - win32con.HTLEFT + 1
+                    win32gui.SendMessage(hwnd, win32con.WM_SYSCOMMAND,
+                                         win32con.SC_SIZE | direction, position)
 
             self.result.native.Invoke(Action(drag))
             self._on_result_resized()
@@ -709,8 +765,21 @@ class UiController:
         if self.result is None:
             return False
         if action == "close":
-            self._on_result_closing()
-            return True
+            return self._hide_result()
+        if action == "minimize":
+            with self._geometry_lock:
+                try:
+                    self._save_geometry()
+                    self._result_taskbar_temporary = True
+                    if not self._apply_result_styles():
+                        raise RuntimeError("could not show result taskbar button")
+                    self.result.minimize()
+                    return True
+                except Exception:
+                    log.exception("minimizing the result card failed")
+                    self._result_taskbar_temporary = False
+                    self._apply_result_styles()
+                    return False
         if action not in ("grow", "shrink", "default"):
             return False
         with self._geometry_lock:
@@ -764,7 +833,11 @@ class UiController:
     def push_history(self, items: list, current_id) -> None:
         self._push_result("history", [items, current_id])
 
+    def push_models(self) -> None:
+        self._push_result('models', [models.choices(self.cfg)])
+
     def push_hotkeys(self) -> None:
+        self.push_models()
         self._push_result("hotkeys", [
             str(self.cfg.get("behavior.hotkey_chinese", "")),
             str(self.cfg.get("behavior.hotkey_english", "")),
@@ -776,25 +849,47 @@ class UiController:
     def show_result(self, activate: bool = True, scroll_top: bool = False) -> None:
         if self.result is None:
             return
-        try:
-            self.result.show()
-            if activate:
-                self.result.restore()
-        except Exception:
-            log.exception("showing result window failed")
-        # Windows refuses SetForegroundWindow for a background process (e.g. when
-        # the translation came from a hotkey), which would leave the card hidden
-        # behind the current window. Raise it to the top without taking focus.
-        self._raise_window(self._refresh_result_handle())
-        self._result_open = True
+        with self._geometry_lock:
+            try:
+                self.result.show()
+                if activate:
+                    self.result.restore()
+                    self._on_result_restored()
+            except Exception:
+                log.exception("showing result window failed")
+            # Windows refuses SetForegroundWindow for a background process (e.g. when
+            # the translation came from a hotkey), which would leave the card hidden
+            # behind the current window. Raise it to the top without taking focus.
+            self._raise_window(self._refresh_result_handle())
+            self._apply_result_styles()
+            self._result_open = True
         if scroll_top:
             self._push_result("focusContent", [])
+
+    def _on_result_restored(self) -> None:
+        with self._geometry_lock:
+            # A queued restore event may arrive after another minimize request.
+            if not self._result_taskbar_temporary or self._result_is_minimized():
+                return
+            self._result_taskbar_temporary = False
+            self._apply_result_styles()
 
     def _refresh_result_handle(self) -> int:
         result = self._safe_hwnd(self.result)
         if result:
             self._result_hwnd = result
         return self._result_hwnd
+
+    def _result_is_minimized(self) -> bool:
+        hwnd = self._refresh_result_handle()
+        if not hwnd:
+            return False
+        try:
+            import win32gui
+            return bool(win32gui.IsIconic(hwnd))
+        except Exception:
+            log.debug("checking result window state failed", exc_info=True)
+            return False
 
     @staticmethod
     def _raise_window(hwnd: int) -> None:
@@ -816,7 +911,8 @@ class UiController:
             log.debug("set_title failed", exc_info=True)
 
     def _save_geometry(self) -> None:
-        if self.result is None:
+        # Minimized windows report off-screen coordinates and unusable sizes.
+        if self.result is None or self._result_is_minimized():
             return
         try:
             height = int(self._result_baseline_h or self.result.height)
@@ -830,7 +926,7 @@ class UiController:
     # ---------------------------------------------------- window auto-height
     def _on_result_resized(self) -> None:
         """Remember a size the user chose; ignore the resizes we do ourselves."""
-        if self.result is None:
+        if self.result is None or self._result_is_minimized():
             return
         try:
             height = int(self.result.height)
@@ -842,7 +938,7 @@ class UiController:
         self._result_baseline_h = max(RESULT_MIN[1], height)
 
     def _restore_result_height(self) -> None:
-        if self.result is None or self._result_baseline_h <= 0:
+        if self.result is None or self._result_baseline_h <= 0 or self._result_is_minimized():
             return
         try:
             current = int(self.result.height)
@@ -858,7 +954,7 @@ class UiController:
         ui.fit_to_content is enabled — the default keeps a fixed card)."""
         if self.result is None or self._manual_size or not bool(self.cfg.get("ui.fit_to_content", False)):
             return
-        if self._result_baseline_h <= 0:
+        if self._result_baseline_h <= 0 or self._result_is_minimized():
             return
         try:
             width = int(self.result.width)
